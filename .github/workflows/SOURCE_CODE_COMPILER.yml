@@ -1,4 +1,4 @@
-name: Build KGAMER-RETROGAMER Orange Pi IMG
+name: Build KGAMER-RETROGAMER IMG
 
 on:
   push:
@@ -26,10 +26,9 @@ jobs:
           parted --script KGAMER-RETROGAMER.img mklabel msdos
           parted --script KGAMER-RETROGAMER.img mkpart primary ext4 4MiB 100%
           
-          # 3. --partscan ile loop cihazına bağla (kernel partition'ı otomatik tanır)
+          # 3. --partscan ile loop cihazına bağla
           LOOP_DEV=$(sudo losetup --find --show --partscan KGAMER-RETROGAMER.img)
           
-          # Doğru partition yolunu bul (Örn: /dev/loop0p1)
           if [ -b "${LOOP_DEV}p1" ]; then
               LOOP_PART="${LOOP_DEV}p1"
           elif [ -b "${LOOP_DEV}1" ]; then
@@ -38,15 +37,13 @@ jobs:
               LOOP_PART=$(ls ${LOOP_DEV}* | grep -E '[0-9]+$' | head -n 1)
           fi
           
-          echo "Using partition: $LOOP_PART"
-          
           # 4. Dosya sistemini biçimlendir ve bağla
           sudo mkfs.ext4 -F "$LOOP_PART"
           mkdir -p mnt
           sudo mount "$LOOP_PART" mnt
           
-          # 5. Debootstrap ile Arm64 Debian Bookworm kur
-          sudo debootstrap --arch=arm64 --include=qemu-user-static,sudo,systemd,systemd-sysv,udev,kmod,netbase bookworm mnt http://ports.debian.org/debian-ports/
+          # 5. Resmi Debian mirror adresi ve keyring kontrolünü atlayarak debootstrap çalıştır
+          sudo debootstrap --arch=arm64 --no-check-gpg --include=qemu-user-static,sudo,systemd,systemd-sysv,udev,kmod,netbase bookworm mnt http://deb.debian.org/debian/
           sudo cp /usr/bin/qemu-aarch64-static mnt/usr/bin/
 
 
