@@ -1,4 +1,4 @@
-name: Build KGAMER RETROGAMER ISO
+name: Build KGAMER-RETROGAMER Orange Pi IMG
 
 on:
   push:
@@ -6,8 +6,8 @@ on:
   workflow_dispatch:
 
 jobs:
-  build:
-    runs-on: ports.debian.org
+  build-img:
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
@@ -15,45 +15,64 @@ jobs:
       - name: Install Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y live-build debootstrap cpio squashfs-tools xorriso qemu-user-static binfmt-support
-          sudo update-binfmts --enable
+          sudo apt-get install -y debootstrap qemu-user-static binfmt-support parted dosfstools e2fsprogs squashfs-tools xorriso curl wget git
 
-      - name: Setup Live-Build Structure & Locked Anti-Deletion Scripts
+      - name: Download Base Debian Arm64 Rootfs & Create Image
         run: |
-          mkdir -p config/package-lists config/hooks/normal
+          # 1. 3GB'lık boş imaj dosyası oluştur
+          dd if=/dev/zero of=KGAMER-RETROGAMER.img bs=1M count=3072
+          
+          # 2. Disk bölümlemesi (MBR / DOS tablosu ve tek partition)
+          parted --script KGAMER-RETROGAMER.img mklabel msdos
+          parted --script KGAMER-RETROGAMER.img mkpart primary ext4 4MiB 100%
+          
+          # 3. Loop cihazına bağla
+          LOOP_DEV=$(sudo losetup --find --show KGAMER-RETROGAMER.img)
+          sudo partprobe "$LOOP_DEV"
+          
+          # Loop partition adını belirle
+          if [[ "$LOOP_DEV" =~ "p" ]]; then
+              LOOP_PART="${LOOP_DEV}1"
+          else
+              LOOP_PART="${LOOP_DEV}p1"
+          fi
+          
+          # 4. Dosya sistemini biçimlendir ve bağla
+          sudo mkfs.ext4 -F "$LOOP_PART"
+          mkdir -p mnt
+          sudo mount "$LOOP_PART" mnt
+          
+          # 5. Debootstrap ile Arm64 Debian Bookworm kur
+          sudo debootstrap --arch=arm64 --include=qemu-user-static,sudo,systemd,systemd-sysv,udev,kmod,netbase bookworm mnt http://ports.debian.org/debian-ports/
+          sudo cp /usr/bin/qemu-aarch64-static mnt/usr/bin/
 
-          # 1. Paket Listesi
-          cat << 'EOF' > config/package-lists/kgamer.list.chroot
-          xserver-xorg-core
-          xinit
-          openbox
-          xfce4-panel
-          pcmanfm
-          gvfs
-          gvfs-backends
-          zenity
-          lxterminal
-          picom
-          whiptail
-          dialog
-          parted
-          resize2fs
-          systemd
-          git
-          sudo
-          build-essential
-          cmake
-          curl
-          wget
-          unzip
-          chromium
-          e2fsprogs
-          EOF
+      - name: Inject KGAMER-RETROGAMER Features, RetroPie, GUI & Protections into IMG
+        run: |
+          LOOP_DEV=$(sudo losetup -j KGAMER-RETROGAMER.img | cut -d ':' -f1)
+          if [[ "$LOOP_DEV" =~ "p" ]]; then
+              LOOP_PART="${LOOP_DEV}1"
+          else
+              LOOP_PART="${LOOP_DEV}p1"
+          fi
+          sudo mount "$LOOP_PART" mnt
 
-          # 2. Sistem Kurulum ve Silinmezlik Koruma Kancası
-          cat << 'EOF' > config/hooks/normal/099-kgamer-setup.chroot
+          # Chroot ortamı için gerekli mount'lar
+          sudo mount -t proc proc mnt/proc
+          sudo mount --bind /dev mnt/dev
+          sudo mount --bind /dev/pts mnt/dev/pts
+          sudo mount --bind /sys mnt/sys
+
+          # Sistem içi kurulacak script ve konfigürasyonları chroot içine aktar
+          sudo mkdir -p mnt/opt/kgamer
+          
+          # Chroot içinde çalışacak kurulum betiği
+          sudo tee mnt/opt/kgamer/setup.sh << 'EOF' > /dev/null
           #!/bin/bash
           export DEBIAN_FRONTEND=noninteractive
+
+          # Ek paketlerin kurulumu
+          apt-get update
+          apt-get install -y xserver-xorg-core xinit openbox xfce4-panel pcmanfm gvfs gvfs-backends zenity lxterminal picom whiptail dialog parted resize2fs git build-essential cmake curl wget unzip chromium e2fsprogs
 
           REAL_USER="pi"
           id -u "$REAL_USER" &>/dev/null || useradd -m -s /bin/bash "$REAL_USER"
@@ -117,7 +136,7 @@ jobs:
           #!/bin/bash
           TARGET_HOME=\$(eval echo "~${REAL_USER}")
           while true; do
-              CHOICES=\$(whiptail --title "KGAMER ORANGE PI REPAIR & SETUP (LOCKED & PROTECTED)" --checklist \
+              CHOICES=\$(whiptail --title "KGAMER-RETROGAMER ORANGE PI REPAIR & SETUP (LOCKED & PROTECTED)" --checklist \
                   "Select components to reinstall/repair (System files are anti-deletion protected):" 22 75 6 \
                   "RETROPIE" "Reinstall RetroPie Core & EmulationStation" OFF \
                   "SETUP_SCRIPT" "Redownload & Setup RetroPie-Setup Script" OFF \
@@ -189,7 +208,7 @@ jobs:
           cat << 'EOT' > /usr/local/bin/kgamer_boot_menu.sh
           #!/bin/bash
           while true; do
-              CHOICE=\$(whiptail --title "KGAMER ORANGE PI SYSTEM MENU (OPENBOX X)" --menu "EmulationStation Quit Action / Select Mode:" 16 65 4 \
+              CHOICE=\$(whiptail --title "KGAMER-RETROGAMER SYSTEM MENU (OPENBOX X)" --menu "EmulationStation Quit Action / Select Mode:" 16 65 4 \
                   "1" "Return to EmulationStation" \
                   "2" "OPENBOX X Desktop GUI (Openbox + Bottom XFCE Panel)" \
                   "3" "RetroPie Setup Script" \
@@ -229,7 +248,7 @@ jobs:
 
           echo 'while true; do /usr/local/bin/kgamer_boot_menu.sh; done' >> "$USER_HOME/.bashrc"
 
-          # D. XFCE Panel Aşağı Açılan Menü ve Alt (Bottom) Konumlandırma Yapılandırması
+          # D. XFCE Panel Aşağı Açılan Menü ve Alt Konumlandırma
           cat << 'EOT' > "$USER_HOME/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-panel.xml"
           <?xml version="1.0" encoding="UTF-8"?>
           <channel name="xfce4-panel" version="1.0">
@@ -266,7 +285,7 @@ jobs:
 
           cat << 'EOT' > /etc/systemd/system/kgamer-expand.service
           [Unit]
-          Description=KGAMER Secure One-Time Auto-Expansion Service
+          Description=KGAMER-RETROGAMER Secure One-Time Auto-Expansion Service
           After=local-fs.target
           [Service]
           Type=oneshot
@@ -278,22 +297,22 @@ jobs:
           systemctl enable kgamer-expand.service
           chown -R "$REAL_USER:$REAL_USER" "$USER_HOME"
           EOF
-          chmod +x config/hooks/normal/099-kgamer-setup.chroot
 
-      - name: Configure Live-Build
-        run: |
-          lb config \
-            --distribution bookworm \
-            --architectures arm64 \
-            --binary-images iso-hybrid \
-            --apt-indices false
+          # Chroot içine girip kurulum betiğini çalıştır
+          sudo chmod +x mnt/opt/kgamer/setup.sh
+          sudo chroot mnt /opt/kgamer/setup.sh
 
-      - name: Manual Bootstrap & Build ISO
+          # Temizlik ve unmount
+          sudo rm -f mnt/opt/kgamer/setup.sh
+          sudo umount mnt/proc mnt/dev/pts mnt/dev mnt/sys mnt
+          sudo losetup -d "$LOOP_DEV"
+
+      - name: Compress and Upload IMG Artifact
         run: |
-          # Debootstrap ile arm64 chroot dizinini manuel ve hatasız oluşturalım
-          sudo mkdir -p chroot
-          sudo debootstrap --arch=arm64 --include=qemu-user-static bookworm ./chroot http://deb.debian.org/debian/
-          sudo cp /usr/bin/qemu-aarch64-static chroot/usr/bin/ || true
-          
-          # Live-build komutunu chroot adımını atlayarak çalıştır
-          sudo lb build
+          zip KGAMER-RETROGAMER.zip KGAMER-RETROGAMER.img
+
+      - name: Upload IMG Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: KGAMER-RETROGAMER
+          path: KGAMER-RETROGAMER.zip
