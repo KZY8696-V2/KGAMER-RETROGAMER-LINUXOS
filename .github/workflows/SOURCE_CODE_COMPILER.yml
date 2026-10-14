@@ -17,7 +17,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y debootstrap qemu-user-static binfmt-support parted dosfstools e2fsprogs squashfs-tools xorriso curl wget git
 
-      - name: Download Base Debian Arm64 Rootfs & Create Image
+      -       - name: Download Base Debian Arm64 Rootfs & Create Image
         run: |
           # 1. 3GB'lık boş imaj dosyası oluştur
           dd if=/dev/zero of=KGAMER-RETROGAMER.img bs=1M count=3072
@@ -26,16 +26,19 @@ jobs:
           parted --script KGAMER-RETROGAMER.img mklabel msdos
           parted --script KGAMER-RETROGAMER.img mkpart primary ext4 4MiB 100%
           
-          # 3. Loop cihazına bağla
-          LOOP_DEV=$(sudo losetup --find --show KGAMER-RETROGAMER.img)
-          sudo partprobe "$LOOP_DEV"
+          # 3. --partscan ile loop cihazına bağla (kernel partition'ı otomatik tanır)
+          LOOP_DEV=$(sudo losetup --find --show --partscan KGAMER-RETROGAMER.img)
           
-          # Loop partition adını belirle
-          if [[ "$LOOP_DEV" =~ "p" ]]; then
+          # Doğru partition yolunu bul (Örn: /dev/loop0p1)
+          if [ -b "${LOOP_DEV}p1" ]; then
+              LOOP_PART="${LOOP_DEV}p1"
+          elif [ -b "${LOOP_DEV}1" ]; then
               LOOP_PART="${LOOP_DEV}1"
           else
-              LOOP_PART="${LOOP_DEV}p1"
+              LOOP_PART=$(ls ${LOOP_DEV}* | grep -E '[0-9]+$' | head -n 1)
           fi
+          
+          echo "Using partition: $LOOP_PART"
           
           # 4. Dosya sistemini biçimlendir ve bağla
           sudo mkfs.ext4 -F "$LOOP_PART"
@@ -45,6 +48,7 @@ jobs:
           # 5. Debootstrap ile Arm64 Debian Bookworm kur
           sudo debootstrap --arch=arm64 --include=qemu-user-static,sudo,systemd,systemd-sysv,udev,kmod,netbase bookworm mnt http://ports.debian.org/debian-ports/
           sudo cp /usr/bin/qemu-aarch64-static mnt/usr/bin/
+
 
       - name: Inject KGAMER-RETROGAMER Features, RetroPie, GUI & Protections into IMG
         run: |
