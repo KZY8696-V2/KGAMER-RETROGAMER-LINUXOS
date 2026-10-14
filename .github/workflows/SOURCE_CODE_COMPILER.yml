@@ -1,4 +1,4 @@
-name: Build KGAMER-RETROGAMER Orange Pi IMG
+name: Build KGAMER-RETROGAMER IMG
 
 on:
   push:
@@ -45,7 +45,7 @@ jobs:
           sudo mount "$LOOP_PART" mnt
           
           # 5. Resmi Debian mirror adresi ve keyring kontrolünü atlayarak debootstrap çalıştır
-          sudo debootstrap --arch=arm64 --no-check-gpg --include=qemu-user-static,sudo,systemd,systemd-sysv,udev,kmod,netbase bookworm mnt http://deb.debian.org/debian/
+          sudo debootstrap --arch=arm64 --no-check-gpg --include=qemu-user-static,sudo,systemd,systemd-sysv,udev,kmod,netbase,linux-image-arm64,u-boot-menu bookworm mnt http://deb.debian.org/debian/
           sudo cp /usr/bin/qemu-aarch64-static mnt/usr/bin/
 
       - name: Inject KGAMER-RETROGAMER Features, RetroPie, GUI & Protections into IMG
@@ -91,6 +91,16 @@ jobs:
           USER_HOME=$(eval echo "~$REAL_USER")
           usermod -aG sudo,audio,video,input "$REAL_USER" 2>/dev/null || true
           echo "$REAL_USER ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
+
+          # Extlinux Konfigürasyonunu Oluştur
+          mkdir -p /boot/extlinux
+          cat << 'EOT' > /boot/extlinux/extlinux.conf
+          DEFAULT kgamer
+          LABEL kgamer
+            KERNEL /boot/vmlinuz
+            INITRD /boot/initrd.img
+            APPEND root=/dev/vda2 rw console=ttyAMA0 rootwait
+          EOT
 
           # A. EmulationStation Uygulama Otomatik Köprüsü
           cat << 'EOT' > /usr/local/bin/update_es_apps.sh
@@ -331,12 +341,8 @@ jobs:
               sudo losetup -d "$LOOP_DEV" 2>/dev/null || true
           fi
 
-      - name: Compress and Upload IMG Artifact
-        run: |
-          zip KGAMER-RETROGAMER.zip KGAMER-RETROGAMER.img
-
       - name: Upload IMG Artifact
         uses: actions/upload-artifact@v4
         with:
           name: KGAMER-RETROGAMER
-          path: KGAMER-RETROGAMER.zip
+          path: KGAMER-RETROGAMER.img
