@@ -16,6 +16,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y live-build debootstrap cpio squashfs-tools xorriso qemu-user-static binfmt-support
+          sudo update-binfmts --enable
 
       - name: Setup Live-Build Structure & Locked Anti-Deletion Scripts
         run: |
@@ -285,6 +286,7 @@ jobs:
             --distribution bookworm \
             --architectures arm64 \
             --binary-images iso-hybrid \
+            --bootstrap debootstrap \
             --apt-indices false
 
       - name: Build ISO Image
