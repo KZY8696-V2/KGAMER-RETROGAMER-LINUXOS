@@ -1,4 +1,4 @@
-name: Build KGAMER RETROGAMER IMG
+name: Build KGAMER-RETROGAMER Orange Pi IMG
 
 on:
   push:
@@ -37,6 +37,8 @@ jobs:
               LOOP_PART=$(ls ${LOOP_DEV}* | grep -E '[0-9]+$' | head -n 1)
           fi
           
+          echo "Using partition: $LOOP_PART"
+          
           # 4. Dosya sistemini biçimlendir ve bağla
           sudo mkfs.ext4 -F "$LOOP_PART"
           mkdir -p mnt
@@ -46,10 +48,8 @@ jobs:
           sudo debootstrap --arch=arm64 --no-check-gpg --include=qemu-user-static,sudo,systemd,systemd-sysv,udev,kmod,netbase bookworm mnt http://deb.debian.org/debian/
           sudo cp /usr/bin/qemu-aarch64-static mnt/usr/bin/
 
-
       - name: Inject KGAMER-RETROGAMER Features, RetroPie, GUI & Protections into IMG
         run: |
-          # Aktif loop imajına ait doğru partition yolunu bul
           LOOP_DEV=$(sudo losetup -j KGAMER-RETROGAMER.img | cut -d ':' -f1 | head -n 1)
           
           if [ -b "${LOOP_DEV}p1" ]; then
@@ -61,16 +61,18 @@ jobs:
           fi
           
           echo "Mounting partition: $LOOP_PART"
-          sudo mount "$LOOP_PART" mnt
-
-          # Chroot ortamı için gerekli mount'lar
-          sudo mount -t proc proc mnt/proc
-          sudo mount --bind /dev mnt/dev
-          sudo mount --bind /dev/pts mnt/dev/pts
-          sudo mount --bind /sys mnt/sys
           
-          # (Geri kalan kurulum betiği aynı kalıyor...)
+          if ! mountpoint -q mnt; then
+              sudo mount "$LOOP_PART" mnt
+          else
+              echo "Partition is already mounted."
+          fi
 
+          # Chroot ortamı için gerekli mount'lar (kontrollü)
+          mountpoint -q mnt/proc || sudo mount -t proc proc mnt/proc
+          mountpoint -q mnt/dev || sudo mount --bind /dev mnt/dev
+          mountpoint -q mnt/dev/pts || sudo mount --bind /dev/pts mnt/dev/pts
+          mountpoint -q mnt/sys || sudo mount --bind /sys mnt/sys
 
           # Sistem içi kurulacak script ve konfigürasyonları chroot içine aktar
           sudo mkdir -p mnt/opt/kgamer
@@ -311,11 +313,23 @@ jobs:
           # Chroot içine girip kurulum betiğini çalıştır
           sudo chmod +x mnt/opt/kgamer/setup.sh
           sudo chroot mnt /opt/kgamer/setup.sh
-
-          # Temizlik ve unmount
           sudo rm -f mnt/opt/kgamer/setup.sh
-          sudo umount mnt/proc mnt/dev/pts mnt/dev mnt/sys mnt
-          sudo losetup -d "$LOOP_DEV"
+
+      - name: Cleanup and Unmount IMG
+        if: always()
+        run: |
+          # Güvenli unmount (hata verse bile devam eder)
+          sudo umount mnt/proc 2>/dev/null || true
+          sudo umount mnt/dev/pts 2>/dev/null || true
+          sudo umount mnt/dev 2>/dev/null || true
+          sudo umount mnt/sys 2>/dev/null || true
+          sudo umount mnt 2>/dev/null || true
+          
+          # Loop cihazını serbest bırak
+          LOOP_DEV=$(sudo losetup -j KGAMER-RETROGAMER.img | cut -d ':' -f1 | head -n 1)
+          if [ -n "$LOOP_DEV" ]; then
+              sudo losetup -d "$LOOP_DEV" 2>/dev/null || true
+          fi
 
       - name: Compress and Upload IMG Artifact
         run: |
