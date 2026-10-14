@@ -1,4 +1,4 @@
-name: Build KGAMER Orange Pi ISO
+name: KGAMER RETROGAMER 
 
 on:
   push:
@@ -61,7 +61,7 @@ jobs:
           usermod -aG sudo,audio,video,input "$REAL_USER" 2>/dev/null || true
           echo "$REAL_USER ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
 
-          # A. EmulationStation Uygulama Otomatik Köprüsü (Terminal, Chromium, PCManFM ve Dahili Kısayollar)
+          # A. EmulationStation Uygulama Otomatik Köprüsü
           cat << 'EOT' > /usr/local/bin/update_es_apps.sh
           #!/bin/bash
           TARGET_HOME=\$(eval echo "~${REAL_USER}")
