@@ -1,4 +1,4 @@
-name: Build KGAMER-RETROGAMER IMG
+name: Build KGAMER RETROGAMER IMG
 
 on:
   push:
@@ -49,12 +49,18 @@ jobs:
 
       - name: Inject KGAMER-RETROGAMER Features, RetroPie, GUI & Protections into IMG
         run: |
-          LOOP_DEV=$(sudo losetup -j KGAMER-RETROGAMER.img | cut -d ':' -f1)
-          if [[ "$LOOP_DEV" =~ "p" ]]; then
+          # Aktif loop imajına ait doğru partition yolunu bul
+          LOOP_DEV=$(sudo losetup -j KGAMER-RETROGAMER.img | cut -d ':' -f1 | head -n 1)
+          
+          if [ -b "${LOOP_DEV}p1" ]; then
+              LOOP_PART="${LOOP_DEV}p1"
+          elif [ -b "${LOOP_DEV}1" ]; then
               LOOP_PART="${LOOP_DEV}1"
           else
-              LOOP_PART="${LOOP_DEV}p1"
+              LOOP_PART=$(ls ${LOOP_DEV}* | grep -E '[0-9]+$' | head -n 1)
           fi
+          
+          echo "Mounting partition: $LOOP_PART"
           sudo mount "$LOOP_PART" mnt
 
           # Chroot ortamı için gerekli mount'lar
@@ -62,6 +68,9 @@ jobs:
           sudo mount --bind /dev mnt/dev
           sudo mount --bind /dev/pts mnt/dev/pts
           sudo mount --bind /sys mnt/sys
+          
+          # (Geri kalan kurulum betiği aynı kalıyor...)
+
 
           # Sistem içi kurulacak script ve konfigürasyonları chroot içine aktar
           sudo mkdir -p mnt/opt/kgamer
