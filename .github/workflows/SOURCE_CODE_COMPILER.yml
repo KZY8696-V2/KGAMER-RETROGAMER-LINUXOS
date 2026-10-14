@@ -1,0 +1,301 @@
+name: Build KGAMER Orange Pi ISO
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Install Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y live-build debootstrap cpio squashfs-tools xorriso qemu-user-static binfmt-support
+
+      - name: Setup Live-Build Structure & Locked Anti-Deletion Scripts
+        run: |
+          mkdir -p config/package-lists config/hooks/normal
+
+          # 1. Paket Listesi
+          cat << 'EOF' > config/package-lists/kgamer.list.chroot
+          xserver-xorg-core
+          xinit
+          openbox
+          xfce4-panel
+          pcmanfm
+          gvfs
+          gvfs-backends
+          zenity
+          lxterminal
+          picom
+          whiptail
+          dialog
+          parted
+          resize2fs
+          systemd
+          git
+          sudo
+          build-essential
+          cmake
+          curl
+          wget
+          unzip
+          chromium
+          e2fsprogs
+          EOF
+
+          # 2. Sistem Kurulum ve Silinmezlik Koruma Kancası
+          cat << 'EOF' > config/hooks/normal/099-kgamer-setup.chroot
+          #!/bin/bash
+          export DEBIAN_FRONTEND=noninteractive
+
+          REAL_USER="pi"
+          id -u "$REAL_USER" &>/dev/null || useradd -m -s /bin/bash "$REAL_USER"
+          USER_HOME=$(eval echo "~$REAL_USER")
+          usermod -aG sudo,audio,video,input "$REAL_USER" 2>/dev/null || true
+          echo "$REAL_USER ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
+
+          # A. EmulationStation Uygulama Otomatik Köprüsü (Terminal, Chromium, PCManFM ve Dahili Kısayollar)
+          cat << 'EOT' > /usr/local/bin/update_es_apps.sh
+          #!/bin/bash
+          TARGET_HOME=\$(eval echo "~${REAL_USER}")
+          APPS_DIR="\$TARGET_HOME/RetroPie/roms/apps"
+          
+          # Silinme korumasını geçici aç, güncelle ve tekrar kilit vur (+i)
+          chattr -i "\$APPS_DIR" 2>/dev/null || true
+          mkdir -p "\$APPS_DIR"
+          rm -f "\$APPS_DIR"/*.sh 2>/dev/null || true
+
+          # Sabit Özel Kısayollar
+          cat << 'EEE' > "\$APPS_DIR/Terminal.sh"
+          #!/bin/bash
+          lxterminal
+          EEE
+          chmod +x "\$APPS_DIR/Terminal.sh"
+          chattr +i "\$APPS_DIR/Terminal.sh" 2>/dev/null || true
+
+          cat << 'EEE' > "\$APPS_DIR/Chromium.sh"
+          #!/bin/bash
+          chromium --no-sandbox --disable-gpu
+          EEE
+          chmod +x "\$APPS_DIR/Chromium.sh"
+          chattr +i "\$APPS_DIR/Chromium.sh" 2>/dev/null || true
+
+          cat << 'EEE' > "\$APPS_DIR/PCManFM_Filemanager.sh"
+          #!/bin/bash
+          pcmanfm
+          EEE
+          chmod +x "\$APPS_DIR/PCManFM_Filemanager.sh"
+          chattr +i "\$APPS_DIR/PCManFM_Filemanager.sh" 2>/dev/null || true
+
+          # Masaüstü uygulamalarını otomatik ekle
+          for desktop_file in /usr/share/applications/*.desktop; do
+              if [ -f "\$desktop_file" ]; then
+                  name=\$(grep -m 1 "^Name=" "\$desktop_file" | cut -d'=' -f2-)
+                  exec_cmd=\$(grep -m 1 "^Exec=" "\$desktop_file" | cut -d'=' -f2- | awk '{print \$1}')
+                  if [ ! -z "\$name" ] && [ ! -z "\$exec_cmd" ]; then
+                      safe_name=\$(echo "\$name" | tr '/' '_' | tr ' ' '_')
+                      cat << EEE > "\$APPS_DIR/\$safe_name.sh"
+          #!/bin/bash
+          \$exec_cmd
+          EEE
+                      chmod +x "\$APPS_DIR/\$safe_name.sh"
+                      chattr +i "\$APPS_DIR/\$safe_name.sh" 2>/dev/null || true
+                  fi
+              fi
+          done
+          chattr +i "\$APPS_DIR" 2>/dev/null || true
+          EOT
+          chmod +x /usr/local/bin/update_es_apps.sh
+          chattr +i /usr/local/bin/update_es_apps.sh
+
+          # B. Modüler Reinstall & Onarım Menüsü (Asla Silinemez/Bozulamaz Korumalı)
+          cat << 'EOT' > /usr/local/bin/kgamer_retropie_reinstall.sh
+          #!/bin/bash
+          TARGET_HOME=\$(eval echo "~${REAL_USER}")
+          while true; do
+              CHOICES=\$(whiptail --title "KGAMER ORANGE PI REPAIR & SETUP (LOCKED & PROTECTED)" --checklist \
+                  "Select components to reinstall/repair (System files are anti-deletion protected):" 22 75 6 \
+                  "RETROPIE" "Reinstall RetroPie Core & EmulationStation" OFF \
+                  "SETUP_SCRIPT" "Redownload & Setup RetroPie-Setup Script" OFF \
+                  "X11_SYSTEM" "Reinstall X11, Openbox & Bottom XFCE Panel" OFF \
+                  "APPS_LINKS" "Regenerate Locked Terminal, Chromium & Apps" ON 3>&1 1>&2 2>&3)
+
+              exitstatus=\$?
+              if [ \$exitstatus -ne 0 ]; then
+                  exit 0
+              fi
+
+              if [ -z "\$CHOICES" ]; then
+                  whiptail --title "Warning" --msgbox "No option selected!" 8 40
+                  continue
+              fi
+
+              (
+                if [[ "\$CHOICES" =~ "SETUP_SCRIPT" ]] || [ ! -d "\$TARGET_HOME/RetroPie-Setup" ]; then
+                    echo 10; rm -rf "\$TARGET_HOME/RetroPie-Setup"
+                    git clone --depth=1 https://github.com/RetroPie/RetroPie-Setup.git "\$TARGET_HOME/RetroPie-Setup"
+                    chown -R ${REAL_USER}:${REAL_USER} "\$TARGET_HOME/RetroPie-Setup"
+                fi
+
+                cd "\$TARGET_HOME/RetroPie-Setup" || exit 1
+
+                if [[ "\$CHOICES" =~ "RETROPIE" ]]; then
+                    echo 40; ./retropie_packages.sh setup basic_install
+                    ./retropie_packages.sh emulationstation
+                    ./retropie_packages.sh retropiemenu
+                fi
+
+                if [[ "\$CHOICES" =~ "X11_SYSTEM" ]]; then
+                    echo 80; apt-get install --reinstall -y xserver-xorg-core xinit openbox xfce4-panel pcmanfm gvfs gvfs-backends zenity lxterminal picom chromium
+                fi
+
+                if [[ "\$CHOICES" =~ "APPS_LINKS" ]]; then
+                    echo 95; /usr/local/bin/update_es_apps.sh
+                fi
+
+                echo 100;
+              ) | whiptail --gauge "Restoring protected components safely..." 6 60 0
+
+              whiptail --title "Success" --msgbox "Restoration completed safely! All protections remain active." 8 50
+              break
+          done
+          EOT
+          chmod +x /usr/local/bin/kgamer_retropie_reinstall.sh
+          chattr +i /usr/local/bin/kgamer_retropie_reinstall.sh
+
+          # İlk Kurulum ve Kilitleme
+          mkdir -p "$USER_HOME/RetroPie/roms/apps" "$USER_HOME/.config/openbox" "$USER_HOME/.config/xfce4/xfconf/xfce-perchannel-xml"
+          git clone --depth=1 https://github.com/RetroPie/RetroPie-Setup.git "$USER_HOME/RetroPie-Setup"
+          chown -R "$REAL_USER:$REAL_USER" "$USER_HOME/RetroPie-Setup"
+          cd "$USER_HOME/RetroPie-Setup"
+          ./retropie_packages.sh setup basic_install
+          ./retropie_packages.sh emulationstation
+          ./retropie_packages.sh retropiemenu
+          /usr/local/bin/update_es_apps.sh
+
+          # Paketlerin silinmesini engelle (Hold)
+          apt-mark hold xserver-xorg-core xinit openbox xfce4-panel pcmanfm chromium 2>/dev/null || true
+
+          mkdir -p /etc/apt/apt.conf.d
+          cat << 'EOT' > /etc/apt/apt.conf.d/99kgamerapps
+          DPkg::Post-Invoke {"/usr/local/bin/update_es_apps.sh";};
+          EOT
+          chattr +i /etc/apt/apt.conf.d/99kgamerapps
+
+          # C. EmulationStation Çıkış ve Dialog Mod Menüsü (Silinmeye Karşı Korumalı)
+          cat << 'EOT' > /usr/local/bin/kgamer_boot_menu.sh
+          #!/bin/bash
+          while true; do
+              CHOICE=\$(whiptail --title "KGAMER ORANGE PI SYSTEM MENU (OPENBOX X)" --menu "EmulationStation Quit Action / Select Mode:" 16 65 4 \
+                  "1" "Return to EmulationStation" \
+                  "2" "OPENBOX X Desktop GUI (Openbox + Bottom XFCE Panel)" \
+                  "3" "RetroPie Setup Script" \
+                  "4" "Modular Reinstall & Repair Menu" 3>&1 1>&2 2>&3)
+
+              exitstatus=\$?
+              if [ \$exitstatus -ne 0 ]; then
+                  emulationstation
+                  continue
+              fi
+
+              case "\$CHOICE" in
+                  "1")
+                      emulationstation
+                      ;;
+                  "2")
+                      xinit openbox -- :0
+                      ;;
+                  "3")
+                      TARGET_HOME=\$(eval echo "~$(whoami)")
+                      cd "\$TARGET_HOME/RetroPie-Setup" && ./retropie_setup.sh
+                      ;;
+                  "4")
+                      /usr/local/bin/kgamer_retropie_reinstall.sh
+                      ;;
+              esac
+          done
+          EOT
+          chmod +x /usr/local/bin/kgamer_boot_menu.sh
+          chattr +i /usr/local/bin/kgamer_boot_menu.sh
+
+          cat << 'EOT' > "$USER_HOME/.config/openbox/autostart"
+          pcmanfm --desktop &
+          picom -b &
+          xfce4-panel &
+          EOT
+
+          echo 'while true; do /usr/local/bin/kgamer_boot_menu.sh; done' >> "$USER_HOME/.bashrc"
+
+          # D. XFCE Panel Aşağı Açılan Menü ve Alt (Bottom) Konumlandırma Yapılandırması
+          cat << 'EOT' > "$USER_HOME/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-panel.xml"
+          <?xml version="1.0" encoding="UTF-8"?>
+          <channel name="xfce4-panel" version="1.0">
+            <property name="configversion" type="int" value="2"/>
+            <property name="panels" type="array">
+              <value type="int" value="1"/>
+            </property>
+            <property name="panel-1" type="empty">
+              <property name="position" type="string" value="p=12;x=0;y=0"/>
+              <property name="length" type="uint" value="100"/>
+              <property name="position-locked" type="bool" value="true"/>
+              <property name="size" type="uint" value="32"/>
+              <property name="mode" type="uint" value="0"/>
+              <property name="span-monitors" type="bool" value="true"/>
+            </property>
+          </channel>
+          EOT
+
+          # E. Tek Seferlik Güvenli Disk Genişletme Servisi (Yalnızca İlk Açılışta Çalışır ve Kendini İmha Eder)
+          cat << 'EOT' > /usr/local/bin/kgamer-expand.sh
+          #!/bin/bash
+          ROOT_PART=\$(findmnt / -o SOURCE -n)
+          DISK_DEV=\$(echo "\$ROOT_PART" | sed 's/[0-9]*//g' | sed 's/p$//')
+          PART_NUM=\$(echo "\$ROOT_PART" | grep -o '[0-9]*$')
+          if [ -n "\$DISK_DEV" ] && [ -n "\$PART_NUM" ]; then
+              parted --script "\$DISK_DEV" resizepart "\$PART_NUM" 100% || true
+              resize2fs "\$ROOT_PART" || true
+              systemctl disable kgamer-expand
+              rm -f /etc/systemd/system/kgamer-expand.service
+              rm -f /usr/local/bin/kgamer-expand.sh
+          fi
+          EOT
+          chmod +x /usr/local/bin/kgamer-expand.sh
+
+          cat << 'EOT' > /etc/systemd/system/kgamer-expand.service
+          [Unit]
+          Description=KGAMER Secure One-Time Auto-Expansion Service
+          After=local-fs.target
+          [Service]
+          Type=oneshot
+          ExecStart=/usr/local/bin/kgamer-expand.sh
+          [Install]
+          WantedBy=multi-user.target
+          EOT
+
+          systemctl enable kgamer-expand.service
+          chown -R "$REAL_USER:$REAL_USER" "$USER_HOME"
+          EOF
+          chmod +x config/hooks/normal/099-kgamer-setup.chroot
+
+      - name: Configure Live-Build
+        run: |
+          lb config \
+            --distribution bookworm \
+            --architectures arm64 \
+            --binary-images iso-hybrid
+
+      - name: Build ISO Image
+        run: |
+          sudo lb build
+
+      - name: Upload ISO Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: kgamer-orange-pi-iso
+          path: '*.iso'
