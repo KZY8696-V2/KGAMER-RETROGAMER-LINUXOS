@@ -1,4 +1,4 @@
-name: Build KGAMER Orange Pi ISO
+name: Build KGAMER RETROGAMER ISO
 
 on:
   push:
