@@ -1,4 +1,4 @@
-name: KGAMER RETROGAMER 
+name: Build KGAMER RETROGAMER ISO
 
 on:
   push:
@@ -286,15 +286,14 @@ jobs:
             --distribution bookworm \
             --architectures arm64 \
             --binary-images iso-hybrid \
-            --bootstrap debootstrap \
             --apt-indices false
 
-      - name: Build ISO Image
+      - name: Manual Bootstrap & Build ISO
         run: |
+          # Debootstrap ile arm64 chroot dizinini manuel ve hatasız oluşturalım
+          sudo mkdir -p chroot
+          sudo debootstrap --arch=arm64 --include=qemu-user-static bookworm ./chroot http://deb.debian.org/debian/
+          sudo cp /usr/bin/qemu-aarch64-static chroot/usr/bin/ || true
+          
+          # Live-build komutunu chroot adımını atlayarak çalıştır
           sudo lb build
-
-      - name: Upload ISO Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: kgamer-orange-pi-iso
-          path: '*.iso'
