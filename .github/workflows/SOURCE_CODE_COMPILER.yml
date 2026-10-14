@@ -1,4 +1,4 @@
-name: Build KGAMER RETROGAMER ISO
+name: Build KGAMER Orange Pi ISO
 
 on:
   push:
@@ -66,12 +66,10 @@ jobs:
           TARGET_HOME=\$(eval echo "~${REAL_USER}")
           APPS_DIR="\$TARGET_HOME/RetroPie/roms/apps"
           
-          # Silinme korumasını geçici aç, güncelle ve tekrar kilit vur (+i)
           chattr -i "\$APPS_DIR" 2>/dev/null || true
           mkdir -p "\$APPS_DIR"
           rm -f "\$APPS_DIR"/*.sh 2>/dev/null || true
 
-          # Sabit Özel Kısayollar
           cat << 'EEE' > "\$APPS_DIR/Terminal.sh"
           #!/bin/bash
           lxterminal
@@ -93,7 +91,6 @@ jobs:
           chmod +x "\$APPS_DIR/PCManFM_Filemanager.sh"
           chattr +i "\$APPS_DIR/PCManFM_Filemanager.sh" 2>/dev/null || true
 
-          # Masaüstü uygulamalarını otomatik ekle
           for desktop_file in /usr/share/applications/*.desktop; do
               if [ -f "\$desktop_file" ]; then
                   name=\$(grep -m 1 "^Name=" "\$desktop_file" | cut -d'=' -f2-)
@@ -114,7 +111,7 @@ jobs:
           chmod +x /usr/local/bin/update_es_apps.sh
           chattr +i /usr/local/bin/update_es_apps.sh
 
-          # B. Modüler Reinstall & Onarım Menüsü (Asla Silinemez/Bozulamaz Korumalı)
+          # B. Modüler Reinstall & Onarım Menüsü
           cat << 'EOT' > /usr/local/bin/kgamer_retropie_reinstall.sh
           #!/bin/bash
           TARGET_HOME=\$(eval echo "~${REAL_USER}")
@@ -146,7 +143,7 @@ jobs:
                 cd "\$TARGET_HOME/RetroPie-Setup" || exit 1
 
                 if [[ "\$CHOICES" =~ "RETROPIE" ]]; then
-                    echo 40; ./retropie_packages.sh setup basic_install
+                    echo 40; DEBIAN_FRONTEND=noninteractive ./retropie_packages.sh setup basic_install
                     ./retropie_packages.sh emulationstation
                     ./retropie_packages.sh retropiemenu
                 fi
@@ -179,7 +176,6 @@ jobs:
           ./retropie_packages.sh retropiemenu
           /usr/local/bin/update_es_apps.sh
 
-          # Paketlerin silinmesini engelle (Hold)
           apt-mark hold xserver-xorg-core xinit openbox xfce4-panel pcmanfm chromium 2>/dev/null || true
 
           mkdir -p /etc/apt/apt.conf.d
@@ -188,7 +184,7 @@ jobs:
           EOT
           chattr +i /etc/apt/apt.conf.d/99kgamerapps
 
-          # C. EmulationStation Çıkış ve Dialog Mod Menüsü (Silinmeye Karşı Korumalı)
+          # C. EmulationStation Çıkış ve Dialog Mod Menüsü
           cat << 'EOT' > /usr/local/bin/kgamer_boot_menu.sh
           #!/bin/bash
           while true; do
@@ -251,7 +247,7 @@ jobs:
           </channel>
           EOT
 
-          # E. Tek Seferlik Güvenli Disk Genişletme Servisi (Yalnızca İlk Açılışta Çalışır ve Kendini İmha Eder)
+          # E. Tek Seferlik Güvenli Disk Genişletme Servisi
           cat << 'EOT' > /usr/local/bin/kgamer-expand.sh
           #!/bin/bash
           ROOT_PART=\$(findmnt / -o SOURCE -n)
@@ -288,7 +284,8 @@ jobs:
           lb config \
             --distribution bookworm \
             --architectures arm64 \
-            --binary-images iso-hybrid
+            --binary-images iso-hybrid \
+            --apt-indices false
 
       - name: Build ISO Image
         run: |
