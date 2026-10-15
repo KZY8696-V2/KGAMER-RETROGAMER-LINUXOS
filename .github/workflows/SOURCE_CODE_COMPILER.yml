@@ -81,7 +81,7 @@ jobs:
           # Sistem içi kurulacak script ve konfigürasyonları chroot içine aktar
           sudo mkdir -p mnt/opt/kgamer
           
-          # Chroot içinde çalışacak kurulum betiği
+          # Chroot içinde çalışacak kurulum betiği (Dinamik Kullanıcı Destekli)
           sudo tee mnt/opt/kgamer/setup.sh << 'EOF' > /dev/null
           export DEBIAN_FRONTEND=noninteractive
 
@@ -89,18 +89,9 @@ jobs:
           echo 'Acquire::Retries "3";' > /etc/apt/apt.conf.d/80-retries
           echo 'APT::Install-Recommends "false";' > /etc/apt/apt.conf.d/80-recommends
 
-          # 1. Erken paket kurulumu
+          # 1. Paket kurulumları
           apt-get update
           apt-get install -y git e2fsprogs whiptail dialog sudo systemd systemd-sysv plymouth plymouth-themes curl wget tar unzip
-
-          # 2. Kullanıcıyı erken oluştur
-          REAL_USER="pi"
-          id -u "$REAL_USER" &>/dev/null || useradd -m -s /bin/bash "$REAL_USER"
-          USER_HOME=$(eval echo "~$REAL_USER")
-          usermod -aG sudo,audio,video,input "$REAL_USER" 2>/dev/null || true
-          echo "$REAL_USER ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
-
-          # 3. Kalan paketlerin ve çekirdeğin kurulumu
           apt-get install -y linux-image-arm64 u-boot-menu xserver-xorg-core xinit openbox xfce4-panel pcmanfm gvfs gvfs-backends zenity lxterminal picom parted chromium keyboard-configuration build-essential cmake
 
           # Extlinux Konfigürasyonunu Oluştur
@@ -161,183 +152,163 @@ jobs:
           plymouth-set-default-theme kgamer-splash
           update-initramfs -u -k all || true
 
-          # A. EmulationStation Uygulama Otomatik Köprüsü (Anti-Deletion Koruma Entegre)
+          # A. EmulationStation Uygulama Otomatik Köprüsü (Dinamik Aktif Kullanıcı Desteğiyle)
           cat << 'EOT' > /usr/local/bin/update_es_apps.sh
           #!/bin/bash
-          TARGET_HOME=\$(eval echo "~${REAL_USER}")
-          APPS_DIR="\$TARGET_HOME/RetroPie/roms/apps"
-          
-          chattr -i "\$APPS_DIR" 2>/dev/null || true
-          mkdir -p "\$APPS_DIR"
-          rm -f "\$APPS_DIR"/*.sh 2>/dev/null || true
+          # Oturum açan veya komutu çalıştıran kullanıcının ev dizinini dinamik bul
+          ACTIVE_USER=$(whoami)
+          if [ "$ACTIVE_USER" = "root" ] && [ -n "$SUDO_USER" ]; then
+              ACTIVE_USER="$SUDO_USER"
+          fi
+          TARGET_HOME=$(eval echo "~$ACTIVE_USER")
+          if [ ! -d "$TARGET_HOME" ]; then
+              TARGET_HOME="$HOME"
+          fi
 
-          cat << 'EEE' > "\$APPS_DIR/Terminal.sh"
+          APPS_DIR="$TARGET_HOME/RetroPie/roms/apps"
+          
+          chattr -i "$APPS_DIR" 2>/dev/null || true
+          mkdir -p "$APPS_DIR"
+          rm -f "$APPS_DIR"/*.sh 2>/dev/null || true
+
+          cat << 'EEE' > "$APPS_DIR/Terminal.sh"
           #!/bin/bash
           lxterminal
           EEE
-          chmod +x "\$APPS_DIR/Terminal.sh"
-          chattr +i "\$APPS_DIR/Terminal.sh" 2>/dev/null || true
+          chmod +x "$APPS_DIR/Terminal.sh"
+          chattr +i "$APPS_DIR/Terminal.sh" 2>/dev/null || true
 
-          cat << 'EEE' > "\$APPS_DIR/Chromium.sh"
+          cat << 'EEE' > "$APPS_DIR/Chromium.sh"
           #!/bin/bash
           chromium --no-sandbox --disable-gpu
           EEE
-          chmod +x "\$APPS_DIR/Chromium.sh"
-          chattr +i "\$APPS_DIR/Chromium.sh" 2>/dev/null || true
+          chmod +x "$APPS_DIR/Chromium.sh"
+          chattr +i "$APPS_DIR/Chromium.sh" 2>/dev/null || true
 
-          cat << 'EEE' > "\$APPS_DIR/PCManFM_Filemanager.sh"
+          cat << 'EEE' > "$APPS_DIR/PCManFM_Filemanager.sh"
           #!/bin/bash
           pcmanfm
           EEE
-          chmod +x "\$APPS_DIR/PCManFM_Filemanager.sh"
-          chattr +i "\$APPS_DIR/PCManFM_Filemanager.sh" 2>/dev/null || true
+          chmod +x "$APPS_DIR/PCManFM_Filemanager.sh"
+          chattr +i "$APPS_DIR/PCManFM_Filemanager.sh" 2>/dev/null || true
 
           for desktop_file in /usr/share/applications/*.desktop; do
-              if [ -f "\$desktop_file" ]; then
-                  name=\$(grep -m 1 "^Name=" "\$desktop_file" | cut -d'=' -f2-)
-                  exec_cmd=\$(grep -m 1 "^Exec=" "\$desktop_file" | cut -d'=' -f2- | awk '{print \$1}')
-                  if [ ! -z "\$name" ] && [ ! -z "\$exec_cmd" ]; then
-                      safe_name=\$(echo "\$name" | tr '/' '_' | tr ' ' '_')
-                      cat << EEE > "\$APPS_DIR/\$safe_name.sh"
+              if [ -f "$desktop_file" ]; then
+                  name=$(grep -m 1 "^Name=" "$desktop_file" | cut -d'=' -f2-)
+                  exec_cmd=$(grep -m 1 "^Exec=" "$desktop_file" | cut -d'=' -f2- | awk '{print $1}')
+                  if [ ! -z "$name" ] && [ ! -z "$exec_cmd" ]; then
+                      safe_name=$(echo "$name" | tr '/' '_' | tr ' ' '_')
+                      cat << EEE > "$APPS_DIR/$safe_name.sh"
           #!/bin/bash
-          \$exec_cmd
+          $exec_cmd
           EEE
-                      chmod +x "\$APPS_DIR/\$safe_name.sh"
-                      chattr +i "\$APPS_DIR/\$safe_name.sh" 2>/dev/null || true
+                      chmod +x "$APPS_DIR/$safe_name.sh"
+                      chattr +i "$APPS_DIR/$safe_name.sh" 2>/dev/null || true
                   fi
               fi
           done
-          chattr +i "\$APPS_DIR" 2>/dev/null || true
+          chattr +i "$APPS_DIR" 2>/dev/null || true
           EOT
           chmod +x /usr/local/bin/update_es_apps.sh
           chattr +i /usr/local/bin/update_es_apps.sh
 
-          # B. Modüler Reinstall & Onarım Menüsü (Çoklu Kaynak / Mirror Destekli)
+          # B. Modüler Reinstall & Onarım Menüsü (Çoklu Kaynak / Dinamik Yol Destekli)
           cat << 'EOT' > /usr/local/bin/kgamer_retropie_reinstall.sh
           #!/bin/bash
-          TARGET_HOME=\$(eval echo "~${REAL_USER}")
+          ACTIVE_USER=$(whoami)
+          if [ "$ACTIVE_USER" = "root" ] && [ -n "$SUDO_USER" ]; then
+              ACTIVE_USER="$SUDO_USER"
+          fi
+          TARGET_HOME=$(eval echo "~$ACTIVE_USER")
+          if [ ! -d "$TARGET_HOME" ]; then
+              TARGET_HOME="$HOME"
+          fi
+
           while true; do
-              CHOICES=\$(whiptail --title "KGAMER-RETROGAMER ORANGE PI REPAIR & SETUP (LOCKED & PROTECTED)" --checklist \
-                  "Select components to reinstall/repair (System files are anti-deletion protected):" 22 75 6 \
+              CHOICES=$(whiptail --title "KGAMER-RETROGAMER REPAIR & SETUP ($ACTIVE_USER)" --checklist \
+                  "Select components to reinstall/repair:" 22 75 6 \
                   "RETROPIE" "Reinstall RetroPie Core & EmulationStation" OFF \
                   "SETUP_SCRIPT" "Redownload & Setup RetroPie-Setup Script" OFF \
                   "X11_SYSTEM" "Reinstall X11, Openbox & Bottom XFCE Panel" OFF \
                   "APPS_LINKS" "Regenerate Locked Terminal, Chromium & Apps" ON 3>&1 1>&2 2>&3)
 
-              exitstatus=\$?
-              if [ \$exitstatus -ne 0 ]; then
+              exitstatus=$?
+              if [ $exitstatus -ne 0 ]; then
                   exit 0
               fi
 
-              if [ -z "\$CHOICES" ]; then
+              if [ -z "$CHOICES" ]; then
                   whiptail --title "Warning" --msgbox "No option selected!" 8 40
                   continue
               fi
 
               (
-                if [[ "\$CHOICES" =~ "SETUP_SCRIPT" ]] || [ ! -d "\$TARGET_HOME/RetroPie-Setup" ]; then
-                    echo 10; rm -rf "\$TARGET_HOME/RetroPie-Setup"
+                if [[ "$CHOICES" =~ "SETUP_SCRIPT" ]] || [ ! -d "$TARGET_HOME/RetroPie-Setup" ]; then
+                    echo 10; rm -rf "$TARGET_HOME/RetroPie-Setup"
                     
-                    # Çoklu Kaynak (Fallback) İndirme Zinciri: GitHub -> GitLab -> RetroPie Resmi Site -> SourceForge Mirror -> Kaynak Arşiv Tarzı
-                    git clone --depth=1 https://github.com/RetroPie/RetroPie-Setup.git "\$TARGET_HOME/RetroPie-Setup" || \
-                    git clone --depth=1 https://gitlab.com/RetroPie/RetroPie-Setup.git "\$TARGET_HOME/RetroPie-Setup" || \
-                    git clone --depth=1 https://github.com/RetroPie/RetroPie-Setup.git --branch master "\$TARGET_HOME/RetroPie-Setup" || \
+                    git clone --depth=1 https://github.com/RetroPie/RetroPie-Setup.git "$TARGET_HOME/RetroPie-Setup" || \
+                    git clone --depth=1 https://gitlab.com/RetroPie/RetroPie-Setup.git "$TARGET_HOME/RetroPie-Setup" || \
+                    git clone --depth=1 https://github.com/RetroPie/RetroPie-Setup.git --branch master "$TARGET_HOME/RetroPie-Setup" || \
                     wget -O /tmp/retropie-setup.zip https://netcologne.dl.sourceforge.net/project/retropie/RetroPie-Setup.zip || \
                     wget -O /tmp/retropie-setup.tar.gz https://github.com/RetroPie/RetroPie-Setup/archive/refs/heads/master.tar.gz || \
                     { echo "All RetroPie download mirrors failed!"; exit 1; }
 
                     if [ -f /tmp/retropie-setup.zip ]; then
                         unzip -q /tmp/retropie-setup.zip -d /tmp/
-                        mv /tmp/RetroPie-Setup-master "\$TARGET_HOME/RetroPie-Setup" 2>/dev/null || mv /tmp/RetroPie-Setup-* "\$TARGET_HOME/RetroPie-Setup"
+                        mv /tmp/RetroPie-Setup-master "$TARGET_HOME/RetroPie-Setup" 2>/dev/null || mv /tmp/RetroPie-Setup-* "$TARGET_HOME/RetroPie-Setup"
                         rm -f /tmp/retropie-setup.zip
                     elif [ -f /tmp/retropie-setup.tar.gz ]; then
                         tar -xzf /tmp/retropie-setup.tar.gz -C /tmp/
-                        mv /tmp/RetroPie-Setup-master "\$TARGET_HOME/RetroPie-Setup" 2>/dev/null || mv /tmp/RetroPie-Setup-* "\$TARGET_HOME/RetroPie-Setup"
+                        mv /tmp/RetroPie-Setup-master "$TARGET_HOME/RetroPie-Setup" 2>/dev/null || mv /tmp/RetroPie-Setup-* "$TARGET_HOME/RetroPie-Setup"
                         rm -f /tmp/retropie-setup.tar.gz
                     fi
-
-                    chown -R ${REAL_USER}:${REAL_USER} "\$TARGET_HOME/RetroPie-Setup"
+                    chown -R "$ACTIVE_USER:$ACTIVE_USER" "$TARGET_HOME/RetroPie-Setup" 2>/dev/null || true
                 fi
 
-                cd "\$TARGET_HOME/RetroPie-Setup" || exit 1
+                cd "$TARGET_HOME/RetroPie-Setup" || exit 1
 
-                if [[ "\$CHOICES" =~ "RETROPIE" ]]; then
+                if [[ "$CHOICES" =~ "RETROPIE" ]]; then
                     echo 40; DEBIAN_FRONTEND=noninteractive ./retropie_packages.sh setup basic_install
                     ./retropie_packages.sh emulationstation
                     ./retropie_packages.sh retropiemenu
                 fi
 
-                if [[ "\$CHOICES" =~ "X11_SYSTEM" ]]; then
+                if [[ "$CHOICES" =~ "X11_SYSTEM" ]]; then
                     echo 80; apt-get install --reinstall -y xserver-xorg-core xinit openbox xfce4-panel pcmanfm gvfs gvfs-backends zenity lxterminal picom chromium
                 fi
 
-                if [[ "\$CHOICES" =~ "APPS_LINKS" ]]; then
+                if [[ "$CHOICES" =~ "APPS_LINKS" ]]; then
                     echo 95; /usr/local/bin/update_es_apps.sh
                 fi
 
                 echo 100;
               ) | whiptail --gauge "Restoring protected components safely..." 6 60 0
 
-              whiptail --title "Success" --msgbox "Restoration completed safely! All protections remain active." 8 50
+              whiptail --title "Success" --msgbox "Restoration completed safely!" 8 50
               break
           done
           EOT
           chmod +x /usr/local/bin/kgamer_retropie_reinstall.sh
           chattr +i /usr/local/bin/kgamer_retropie_reinstall.sh
 
-          # İlk Kurulum ve Çoklu Kaynaklı İndirme Güvencesi
-          mkdir -p "$USER_HOME/RetroPie/roms/apps" "$USER_HOME/.config/openbox" "$USER_HOME/.config/xfce4/xfconf/xfce-perchannel-xml"
-          
-          if [ ! -d "$USER_HOME/RetroPie-Setup" ]; then
-              git clone --depth=1 https://github.com/RetroPie/RetroPie-Setup.git "$USER_HOME/RetroPie-Setup" || \
-              git clone --depth=1 https://gitlab.com/RetroPie/RetroPie-Setup.git "$USER_HOME/RetroPie-Setup" || \
-              wget -O /tmp/retropie-setup.zip https://netcologne.dl.sourceforge.net/project/retropie/RetroPie-Setup.zip || \
-              wget -O /tmp/retropie-setup.tar.gz https://github.com/RetroPie/RetroPie-Setup/archive/refs/heads/master.tar.gz || true
-
-              if [ -f /tmp/retropie-setup.zip ]; then
-                  unzip -q /tmp/retropie-setup.zip -d /tmp/
-                  mv /tmp/RetroPie-Setup-master "$USER_HOME/RetroPie-Setup" 2>/dev/null || mv /tmp/RetroPie-Setup-* "$USER_HOME/RetroPie-Setup"
-                  rm -f /tmp/retropie-setup.zip
-              elif [ -f /tmp/retropie-setup.tar.gz ]; then
-                  tar -xzf /tmp/retropie-setup.tar.gz -C /tmp/
-                  mv /tmp/RetroPie-Setup-master "$USER_HOME/RetroPie-Setup" 2>/dev/null || mv /tmp/RetroPie-Setup-* "$USER_HOME/RetroPie-Setup"
-                  rm -f /tmp/retropie-setup.tar.gz
-              fi
-          fi
-
-          chown -R "$REAL_USER:$REAL_USER" "$USER_HOME/RetroPie-Setup"
-          cd "$USER_HOME/RetroPie-Setup"
-          DEBIAN_FRONTEND=noninteractive ./retropie_packages.sh setup basic_install
-          ./retropie_packages.sh emulationstation
-          ./retropie_packages.sh retropiemenu
-          /usr/local/bin/update_es_apps.sh
-
-          apt-mark hold xserver-xorg-core xinit openbox xfce4-panel pcmanfm chromium 2>/dev/null || true
-
-          mkdir -p /etc/apt/apt.conf.d
-          cat << 'EOT' > /etc/apt/apt.conf.d/99kgamerapps
-          DPkg::Post-Invoke {"/usr/local/bin/update_es_apps.sh";};
-          EOT
-          chattr +i /etc/apt/apt.conf.d/99kgamerapps
-
           # C. EmulationStation Çıkış ve Çoklu Dil Klavye Destekli Sistem Menüsü
           cat << 'EOT' > /usr/local/bin/kgamer_boot_menu.sh
           #!/bin/bash
           while true; do
-              CHOICE=\$(whiptail --title "KGAMER-RETROGAMER SYSTEM MENU (OPENBOX X)" --menu "EmulationStation Quit Action / Select Mode:" 18 65 5 \
+              CHOICE=$(whiptail --title "KGAMER-RETROGAMER SYSTEM MENU (OPENBOX X)" --menu "EmulationStation Quit Action / Select Mode:" 18 65 5 \
                   "1" "Return to EmulationStation" \
                   "2" "OPENBOX X Desktop GUI (Openbox + Bottom XFCE Panel)" \
                   "3" "RetroPie Setup Script" \
                   "4" "Modular Reinstall & Repair Menu" \
                   "5" "Change Keyboard Layout (All Languages)" 3>&1 1>&2 2>&3)
 
-              exitstatus=\$?
-              if [ \$exitstatus -ne 0 ]; then
+              exitstatus=$?
+              if [ $exitstatus -ne 0 ]; then
                   emulationstation
                   continue
               fi
 
-              case "\$CHOICE" in
+              case "$CHOICE" in
                   "1")
                       emulationstation
                       ;;
@@ -345,14 +316,18 @@ jobs:
                       xinit openbox -- :0
                       ;;
                   "3")
-                      TARGET_HOME=\$(eval echo "~$(whoami)")
-                      cd "\$TARGET_HOME/RetroPie-Setup" && ./retropie_setup.sh
+                      ACTIVE_USER=$(whoami)
+                      if [ "$ACTIVE_USER" = "root" ] && [ -n "$SUDO_USER" ]; then
+                          ACTIVE_USER="$SUDO_USER"
+                      fi
+                      TARGET_HOME=$(eval echo "~$ACTIVE_USER")
+                      cd "$TARGET_HOME/RetroPie-Setup" && ./retropie_setup.sh
                       ;;
                   "4")
                       /usr/local/bin/kgamer_retropie_reinstall.sh
                       ;;
                   "5")
-                      KB_CHOICE=\$(whiptail --title "Select Keyboard Layout" --menu "Choose your keyboard layout:" 22 60 12 \
+                      KB_CHOICE=$(whiptail --title "Select Keyboard Layout" --menu "Choose your keyboard layout:" 22 60 12 \
                           "us" "English (US)" \
                           "gb" "English (UK)" \
                           "tr" "Turkish (Türkçe Q)" \
@@ -366,18 +341,18 @@ jobs:
                           "kr" "Korean (한국어)" \
                           "cn" "Chinese (中文)" 3>&1 1>&2 2>&3)
                       
-                      if [ \$? -eq 0 ] && [ ! -z "\$KB_CHOICE" ]; then
-                          sudo localectl set-x11-keymap \$KB_CHOICE 2>/dev/null || true
-                          case "\$KB_CHOICE" in
-                              "tr") sudo loadkeys trq 2>/dev/null || true ;;
-                              "ru") sudo loadkeys ru 2>/dev/null || true ;;
-                              "de") sudo loadkeys de 2>/dev/null || true ;;
-                              "fr") sudo loadkeys fr 2>/dev/null || true ;;
-                              "es") sudo loadkeys es 2>/dev/null || true ;;
-                              "it") sudo loadkeys it 2>/dev/null || true ;;
-                              *) sudo loadkeys us 2>/dev/null || true ;;
+                      if [ $? -eq 0 ] && [ ! -z "$KB_CHOICE" ]; then
+                          localectl set-x11-keymap $KB_CHOICE 2>/dev/null || true
+                          case "$KB_CHOICE" in
+                              "tr") loadkeys trq 2>/dev/null || true ;;
+                              "ru") loadkeys ru 2>/dev/null || true ;;
+                              "de") loadkeys de 2>/dev/null || true ;;
+                              "fr") loadkeys fr 2>/dev/null || true ;;
+                              "es") loadkeys es 2>/dev/null || true ;;
+                              "it") loadkeys it 2>/dev/null || true ;;
+                              *) loadkeys us 2>/dev/null || true ;;
                           esac
-                          whiptail --title "Success" --msgbox "Keyboard layout successfully changed to \$KB_CHOICE!" 8 50
+                          whiptail --title "Success" --msgbox "Keyboard layout successfully changed to $KB_CHOICE!" 8 50
                       fi
                       ;;
               esac
@@ -386,16 +361,16 @@ jobs:
           chmod +x /usr/local/bin/kgamer_boot_menu.sh
           chattr +i /usr/local/bin/kgamer_boot_menu.sh
 
-          cat << 'EOT' > "$USER_HOME/.config/openbox/autostart"
+          # D. XFCE Panel Aşağı Açılan Menü ve Alt Konumlandırma (Tüm kullanıcı iskeletine şablon olarak ekle)
+          mkdir -p /etc/skel/.config/openbox /etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml
+          
+          cat << 'EOT' > /etc/skel/.config/openbox/autostart
           pcmanfm --desktop &
           picom -b &
           xfce4-panel &
           EOT
 
-          echo 'while true; do /usr/local/bin/kgamer_boot_menu.sh; done' >> "$USER_HOME/.bashrc"
-
-          # D. XFCE Panel Aşağı Açılan Menü ve Alt Konumlandırma
-          cat << 'EOT' > "$USER_HOME/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-panel.xml"
+          cat << 'EOT' > /etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-panel.xml
           <?xml version="1.0" encoding="UTF-8"?>
           <channel name="xfce4-panel" version="1.0">
             <property name="configversion" type="int" value="2"/>
@@ -413,15 +388,17 @@ jobs:
           </channel>
           EOT
 
+          echo 'while true; do /usr/local/bin/kgamer_boot_menu.sh; done' >> /etc/skel/.bashrc
+
           # E. Tek Seferlik Güvenli Disk Genişletme Servisi
           cat << 'EOT' > /usr/local/bin/kgamer-expand.sh
           #!/bin/bash
-          ROOT_PART=\$(findmnt / -o SOURCE -n)
-          DISK_DEV=\$(echo "\$ROOT_PART" | sed 's/[0-9]*//g' | sed 's/p$//')
-          PART_NUM=\$(echo "\$ROOT_PART" | grep -o '[0-9]*$')
-          if [ -n "\$DISK_DEV" ] && [ -n "\$PART_NUM" ]; then
-              parted --script "\$DISK_DEV" resizepart "\$PART_NUM" 100% || true
-              resize2fs "\$ROOT_PART" || true
+          ROOT_PART=$(findmnt / -o SOURCE -n)
+          DISK_DEV=$(echo "$ROOT_PART" | sed 's/[0-9]*//g' | sed 's/p$//')
+          PART_NUM=$(echo "$ROOT_PART" | grep -o '[0-9]*$')
+          if [ -n "$DISK_DEV" ] && [ -n "$PART_NUM" ]; then
+              parted --script "$DISK_DEV" resizepart "$PART_NUM" 100% || true
+              resize2fs "$ROOT_PART" || true
               systemctl disable kgamer-expand
               rm -f /etc/systemd/system/kgamer-expand.service
               rm -f /usr/local/bin/kgamer-expand.sh
@@ -441,7 +418,6 @@ jobs:
           EOT
 
           systemctl enable kgamer-expand.service
-          chown -R "$REAL_USER:$REAL_USER" "$USER_HOME"
           EOF
 
           # Chroot içine girip kurulum betiğini çalıştır
