@@ -44,7 +44,7 @@ jobs:
           mkdir -p mnt
           sudo mount "$LOOP_PART" mnt
           
-          # 5. Debootstrap (Çekirdeği debootstrap içine koyarak yavaşlatmıyoruz, chroot içinde hızlıca kuracağız)
+          # 5. Debootstrap çalıştır
           sudo debootstrap --arch=arm64 --no-check-gpg --include=qemu-user-static,sudo,systemd,systemd-sysv,udev,kmod,netbase bookworm mnt http://deb.debian.org/debian/
           sudo cp /usr/bin/qemu-aarch64-static mnt/usr/bin/
 
@@ -68,7 +68,7 @@ jobs:
               echo "Partition is already mounted."
           fi
 
-          # Chroot ortamı için gerekli mount'lar (kontrollü)
+          # Chroot ortamı için gerekli mount'lar
           mountpoint -q mnt/proc || sudo mount -t proc proc mnt/proc
           mountpoint -q mnt/dev || sudo mount --bind /dev mnt/dev
           mountpoint -q mnt/dev/pts || sudo mount --bind /dev/pts mnt/dev/pts
@@ -85,15 +85,19 @@ jobs:
           echo 'Acquire::Retries "3";' > /etc/apt/apt.conf.d/80-retries
           echo 'APT::Install-Recommends "false";' > /etc/apt/apt.conf.d/80-recommends
 
-          # Çekirdek ve gerekli paketlerin hızlı kurulumu
+          # 1. Erken paket kurulumu
           apt-get update
-          apt-get install -y linux-image-arm64 u-boot-menu xserver-xorg-core xinit openbox xfce4-panel pcmanfm gvfs gvfs-backends zenity lxterminal picom whiptail dialog parted resize2fs git build-essential cmake curl wget unzip chromium e2fsprogs keyboard-configuration
+          apt-get install -y git e2fsprogs whiptail dialog sudo systemd systemd-sysv
 
+          # 2. Kullanıcıyı erken oluştur
           REAL_USER="pi"
           id -u "$REAL_USER" &>/dev/null || useradd -m -s /bin/bash "$REAL_USER"
           USER_HOME=$(eval echo "~$REAL_USER")
           usermod -aG sudo,audio,video,input "$REAL_USER" 2>/dev/null || true
           echo "$REAL_USER ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
+
+          # 3. Kalan paketlerin ve çekirdeğin kurulumu
+          apt-get install -y linux-image-arm64 u-boot-menu xserver-xorg-core xinit openbox xfce4-panel pcmanfm gvfs gvfs-backends zenity lxterminal picom parted chromium keyboard-configuration build-essential cmake curl wget unzip
 
           # Extlinux Konfigürasyonunu Oluştur
           mkdir -p /boot/extlinux
@@ -105,7 +109,7 @@ jobs:
             APPEND root=/dev/vda2 rw console=ttyAMA0 rootwait
           EOT
 
-          # A. EmulationStation Uygulama Otomatik Köprüsü
+          # A. EmulationStation Uygulama Otomatik Köprüsü (Anti-Deletion Koruma Entegre)
           cat << 'EOT' > /usr/local/bin/update_es_apps.sh
           #!/bin/bash
           TARGET_HOME=\$(eval echo "~${REAL_USER}")
@@ -156,7 +160,7 @@ jobs:
           chmod +x /usr/local/bin/update_es_apps.sh
           chattr +i /usr/local/bin/update_es_apps.sh
 
-          # B. Modüler Reinstall & Onarım Menüsü
+          # B. Modüler Reinstall & Onarım Menüsü (Korumalı)
           cat << 'EOT' > /usr/local/bin/kgamer_retropie_reinstall.sh
           #!/bin/bash
           TARGET_HOME=\$(eval echo "~${REAL_USER}")
@@ -229,7 +233,7 @@ jobs:
           EOT
           chattr +i /etc/apt/apt.conf.d/99kgamerapps
 
-          # C. EmulationStation Çıkış ve Dialog Mod Menüsü (Tüm Klavye Düzenleri)
+          # C. EmulationStation Çıkış ve Çoklu Dil Klavye Destekli Sistem Menüsü
           cat << 'EOT' > /usr/local/bin/kgamer_boot_menu.sh
           #!/bin/bash
           while true; do
@@ -361,7 +365,7 @@ jobs:
       - name: Cleanup and Unmount IMG
         if: always()
         run: |
-          # Güvenli unmount (hata verse bile devam eder)
+          # Güvenli unmount
           sudo umount mnt/proc 2>/dev/null || true
           sudo umount mnt/dev/pts 2>/dev/null || true
           sudo umount mnt/dev 2>/dev/null || true
