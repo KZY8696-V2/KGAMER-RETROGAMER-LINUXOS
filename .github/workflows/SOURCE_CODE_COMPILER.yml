@@ -15,7 +15,7 @@ jobs:
       - name: Install Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y debootstrap qemu-user-static binfmt-support parted dosfstools e2fsprogs squashfs-tools xorriso curl wget git
+          sudo apt-get install -y debootstrap qemu-user-static binfmt-support parted dosfstools e2fsprogs squashfs-tools xorriso curl wget git plymouth plymouth-themes
 
       - name: Download Base Debian Arm64 Rootfs & Create Image
         run: |
@@ -48,7 +48,7 @@ jobs:
           sudo debootstrap --arch=arm64 --no-check-gpg --include=qemu-user-static,sudo,systemd,systemd-sysv,udev,kmod,netbase bookworm mnt http://deb.debian.org/debian/
           sudo cp /usr/bin/qemu-aarch64-static mnt/usr/bin/
 
-      - name: Inject KGAMER-RETROGAMER Features, RetroPie, GUI & Protections into IMG
+      - name: Inject KGAMER-RETROGAMER Features, Plymouth Animation & Protections into IMG
         run: |
           LOOP_DEV=$(sudo losetup -j KGAMER-RETROGAMER.img | cut -d ':' -f1 | head -n 1)
           
@@ -74,6 +74,10 @@ jobs:
           mountpoint -q mnt/dev/pts || sudo mount --bind /dev/pts mnt/dev/pts
           mountpoint -q mnt/sys || sudo mount --bind /sys mnt/sys
 
+          # Repodaki frame ile başlayan tüm görselleri Plymouth tema klasörüne aktar
+          sudo mkdir -p mnt/usr/share/plymouth/themes/kgamer-splash
+          sudo find . -maxdepth 2 -type f -iname "*frame*" -exec cp {} mnt/usr/share/plymouth/themes/kgamer-splash/ \; 2>/dev/null || true
+
           # Sistem içi kurulacak script ve konfigürasyonları chroot içine aktar
           sudo mkdir -p mnt/opt/kgamer
           
@@ -87,7 +91,7 @@ jobs:
 
           # 1. Erken paket kurulumu
           apt-get update
-          apt-get install -y git e2fsprogs whiptail dialog sudo systemd systemd-sysv
+          apt-get install -y git e2fsprogs whiptail dialog sudo systemd systemd-sysv plymouth plymouth-themes curl wget tar unzip
 
           # 2. Kullanıcıyı erken oluştur
           REAL_USER="pi"
@@ -97,7 +101,7 @@ jobs:
           echo "$REAL_USER ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
 
           # 3. Kalan paketlerin ve çekirdeğin kurulumu
-          apt-get install -y linux-image-arm64 u-boot-menu xserver-xorg-core xinit openbox xfce4-panel pcmanfm gvfs gvfs-backends zenity lxterminal picom parted chromium keyboard-configuration build-essential cmake curl wget unzip
+          apt-get install -y linux-image-arm64 u-boot-menu xserver-xorg-core xinit openbox xfce4-panel pcmanfm gvfs gvfs-backends zenity lxterminal picom parted chromium keyboard-configuration build-essential cmake
 
           # Extlinux Konfigürasyonunu Oluştur
           mkdir -p /boot/extlinux
@@ -108,6 +112,54 @@ jobs:
             INITRD /boot/initrd.img
             APPEND root=/dev/vda2 rw console=ttyAMA0 rootwait
           EOT
+
+          # Plymouth Tema Konfigürasyon Dosyasını Oluştur (.plymouth)
+          cat << 'EOT' > /usr/share/plymouth/themes/kgamer-splash/kgamer-splash.plymouth
+          [Plymouth Theme]
+          Name=KGAMER Boot Animation
+          Description=Custom 150-Frame Retro Boot Animation
+          ModuleName=script
+
+          [script]
+          ImageDir=/usr/share/plymouth/themes/kgamer-splash
+          ScriptFile=/usr/share/plymouth/themes/kgamer-splash/kgamer-splash.script
+          EOT
+
+          # Plymouth Animasyon Script Dosyasını Oluştur (.script)
+          cat << 'EOT' > /usr/share/plymouth/themes/kgamer-splash/kgamer-splash.script
+          item_count = 150;
+          for (i = 1; i <= item_count; i++) {
+              if (i < 10) img_name = "frame_000" + i + ".png";
+              else if (i < 100) img_name = "frame_00" + i + ".png";
+              else img_name = "frame_0" + i + ".png";
+              
+              frames[i] = Image(img_name);
+          }
+
+          screen_width = Window.GetWidth();
+          screen_height = Window.GetHeight();
+          global.frame_index = 0;
+
+          fun refresh_callback () {
+              global.frame_index++;
+              if (global.frame_index > item_count) {
+                  global.frame_index = 1;
+              }
+              
+              my_image = frames[global.frame_index];
+              if (my_image) {
+                  x = (screen_width - my_image.GetWidth()) / 2;
+                  y = (screen_height - my_image.GetHeight()) / 2;
+                  Window.SetBackgroundBlack();
+                  Window.DrawImage(my_image, x, y);
+              }
+          }
+
+          Plymouth.SetRefreshFunction(refresh_callback);
+          EOT
+
+          plymouth-set-default-theme kgamer-splash
+          update-initramfs -u -k all || true
 
           # A. EmulationStation Uygulama Otomatik Köprüsü (Anti-Deletion Koruma Entegre)
           cat << 'EOT' > /usr/local/bin/update_es_apps.sh
@@ -160,7 +212,7 @@ jobs:
           chmod +x /usr/local/bin/update_es_apps.sh
           chattr +i /usr/local/bin/update_es_apps.sh
 
-          # B. Modüler Reinstall & Onarım Menüsü (Korumalı)
+          # B. Modüler Reinstall & Onarım Menüsü (Çoklu Kaynak / Mirror Destekli)
           cat << 'EOT' > /usr/local/bin/kgamer_retropie_reinstall.sh
           #!/bin/bash
           TARGET_HOME=\$(eval echo "~${REAL_USER}")
@@ -185,7 +237,25 @@ jobs:
               (
                 if [[ "\$CHOICES" =~ "SETUP_SCRIPT" ]] || [ ! -d "\$TARGET_HOME/RetroPie-Setup" ]; then
                     echo 10; rm -rf "\$TARGET_HOME/RetroPie-Setup"
-                    git clone --depth=1 https://github.com/RetroPie/RetroPie-Setup.git "\$TARGET_HOME/RetroPie-Setup"
+                    
+                    # Çoklu Kaynak (Fallback) İndirme Zinciri: GitHub -> GitLab -> RetroPie Resmi Site -> SourceForge Mirror -> Kaynak Arşiv Tarzı
+                    git clone --depth=1 https://github.com/RetroPie/RetroPie-Setup.git "\$TARGET_HOME/RetroPie-Setup" || \
+                    git clone --depth=1 https://gitlab.com/RetroPie/RetroPie-Setup.git "\$TARGET_HOME/RetroPie-Setup" || \
+                    git clone --depth=1 https://github.com/RetroPie/RetroPie-Setup.git --branch master "\$TARGET_HOME/RetroPie-Setup" || \
+                    wget -O /tmp/retropie-setup.zip https://netcologne.dl.sourceforge.net/project/retropie/RetroPie-Setup.zip || \
+                    wget -O /tmp/retropie-setup.tar.gz https://github.com/RetroPie/RetroPie-Setup/archive/refs/heads/master.tar.gz || \
+                    { echo "All RetroPie download mirrors failed!"; exit 1; }
+
+                    if [ -f /tmp/retropie-setup.zip ]; then
+                        unzip -q /tmp/retropie-setup.zip -d /tmp/
+                        mv /tmp/RetroPie-Setup-master "\$TARGET_HOME/RetroPie-Setup" 2>/dev/null || mv /tmp/RetroPie-Setup-* "\$TARGET_HOME/RetroPie-Setup"
+                        rm -f /tmp/retropie-setup.zip
+                    elif [ -f /tmp/retropie-setup.tar.gz ]; then
+                        tar -xzf /tmp/retropie-setup.tar.gz -C /tmp/
+                        mv /tmp/RetroPie-Setup-master "\$TARGET_HOME/RetroPie-Setup" 2>/dev/null || mv /tmp/RetroPie-Setup-* "\$TARGET_HOME/RetroPie-Setup"
+                        rm -f /tmp/retropie-setup.tar.gz
+                    fi
+
                     chown -R ${REAL_USER}:${REAL_USER} "\$TARGET_HOME/RetroPie-Setup"
                 fi
 
@@ -215,9 +285,26 @@ jobs:
           chmod +x /usr/local/bin/kgamer_retropie_reinstall.sh
           chattr +i /usr/local/bin/kgamer_retropie_reinstall.sh
 
-          # İlk Kurulum ve Kilitleme
+          # İlk Kurulum ve Çoklu Kaynaklı İndirme Güvencesi
           mkdir -p "$USER_HOME/RetroPie/roms/apps" "$USER_HOME/.config/openbox" "$USER_HOME/.config/xfce4/xfconf/xfce-perchannel-xml"
-          git clone --depth=1 https://github.com/RetroPie/RetroPie-Setup.git "$USER_HOME/RetroPie-Setup"
+          
+          if [ ! -d "$USER_HOME/RetroPie-Setup" ]; then
+              git clone --depth=1 https://github.com/RetroPie/RetroPie-Setup.git "$USER_HOME/RetroPie-Setup" || \
+              git clone --depth=1 https://gitlab.com/RetroPie/RetroPie-Setup.git "$USER_HOME/RetroPie-Setup" || \
+              wget -O /tmp/retropie-setup.zip https://netcologne.dl.sourceforge.net/project/retropie/RetroPie-Setup.zip || \
+              wget -O /tmp/retropie-setup.tar.gz https://github.com/RetroPie/RetroPie-Setup/archive/refs/heads/master.tar.gz || true
+
+              if [ -f /tmp/retropie-setup.zip ]; then
+                  unzip -q /tmp/retropie-setup.zip -d /tmp/
+                  mv /tmp/RetroPie-Setup-master "$USER_HOME/RetroPie-Setup" 2>/dev/null || mv /tmp/RetroPie-Setup-* "$USER_HOME/RetroPie-Setup"
+                  rm -f /tmp/retropie-setup.zip
+              elif [ -f /tmp/retropie-setup.tar.gz ]; then
+                  tar -xzf /tmp/retropie-setup.tar.gz -C /tmp/
+                  mv /tmp/RetroPie-Setup-master "$USER_HOME/RetroPie-Setup" 2>/dev/null || mv /tmp/RetroPie-Setup-* "$USER_HOME/RetroPie-Setup"
+                  rm -f /tmp/retropie-setup.tar.gz
+              fi
+          fi
+
           chown -R "$REAL_USER:$REAL_USER" "$USER_HOME/RetroPie-Setup"
           cd "$USER_HOME/RetroPie-Setup"
           DEBIAN_FRONTEND=noninteractive ./retropie_packages.sh setup basic_install
