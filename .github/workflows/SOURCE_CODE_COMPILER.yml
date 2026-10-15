@@ -81,7 +81,7 @@ jobs:
           # Sistem içi kurulacak script ve konfigürasyonları chroot içine aktar
           sudo mkdir -p mnt/opt/kgamer
           
-          # Chroot içinde çalışacak kurulum betiği (Dinamik Kullanıcı Destekli)
+          # Chroot içinde çalışacak kurulum betiği
           sudo tee mnt/opt/kgamer/setup.sh << 'EOF' > /dev/null
           export DEBIAN_FRONTEND=noninteractive
 
@@ -152,10 +152,12 @@ jobs:
           plymouth-set-default-theme kgamer-splash
           update-initramfs -u -k all || true
 
+          # Plymouth tema klasörünü silinmelere ve değişikliklere karşı kilitle
+          chattr -R +i /usr/share/plymouth/themes/kgamer-splash 2>/dev/null || true
+
           # A. EmulationStation Uygulama Otomatik Köprüsü (Dinamik Aktif Kullanıcı Desteğiyle)
           cat << 'EOT' > /usr/local/bin/update_es_apps.sh
           #!/bin/bash
-          # Oturum açan veya komutu çalıştıran kullanıcının ev dizinini dinamik bul
           ACTIVE_USER=$(whoami)
           if [ "$ACTIVE_USER" = "root" ] && [ -n "$SUDO_USER" ]; then
               ACTIVE_USER="$SUDO_USER"
