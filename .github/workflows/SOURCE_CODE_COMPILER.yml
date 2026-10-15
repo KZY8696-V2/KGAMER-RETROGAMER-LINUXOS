@@ -84,7 +84,7 @@ jobs:
 
           # Ek paketlerin kurulumu
           apt-get update
-          apt-get install -y xserver-xorg-core xinit openbox xfce4-panel pcmanfm gvfs gvfs-backends zenity lxterminal picom whiptail dialog parted resize2fs git build-essential cmake curl wget unzip chromium e2fsprogs
+          apt-get install -y xserver-xorg-core xinit openbox xfce4-panel pcmanfm gvfs gvfs-backends zenity lxterminal picom whiptail dialog parted resize2fs git build-essential cmake curl wget unzip chromium e2fsprogs keyboard-configuration
 
           REAL_USER="pi"
           id -u "$REAL_USER" &>/dev/null || useradd -m -s /bin/bash "$REAL_USER"
@@ -226,15 +226,16 @@ jobs:
           EOT
           chattr +i /etc/apt/apt.conf.d/99kgamerapps
 
-          # C. EmulationStation Çıkış ve Dialog Mod Menüsü
+          # C. EmulationStation Çıkış ve Dialog Mod Menüsü (Tüm Klavye Düzenleri Entegre Edildi)
           cat << 'EOT' > /usr/local/bin/kgamer_boot_menu.sh
           #!/bin/bash
           while true; do
-              CHOICE=\$(whiptail --title "KGAMER-RETROGAMER SYSTEM MENU (OPENBOX X)" --menu "EmulationStation Quit Action / Select Mode:" 16 65 4 \
+              CHOICE=\$(whiptail --title "KGAMER-RETROGAMER SYSTEM MENU (OPENBOX X)" --menu "EmulationStation Quit Action / Select Mode:" 18 65 5 \
                   "1" "Return to EmulationStation" \
                   "2" "OPENBOX X Desktop GUI (Openbox + Bottom XFCE Panel)" \
                   "3" "RetroPie Setup Script" \
-                  "4" "Modular Reinstall & Repair Menu" 3>&1 1>&2 2>&3)
+                  "4" "Modular Reinstall & Repair Menu" \
+                  "5" "Change Keyboard Layout (All Languages)" 3>&1 1>&2 2>&3)
 
               exitstatus=\$?
               if [ \$exitstatus -ne 0 ]; then
@@ -255,6 +256,35 @@ jobs:
                       ;;
                   "4")
                       /usr/local/bin/kgamer_retropie_reinstall.sh
+                      ;;
+                  "5")
+                      KB_CHOICE=\$(whiptail --title "Select Keyboard Layout" --menu "Choose your keyboard layout:" 22 60 12 \
+                          "us" "English (US)" \
+                          "gb" "English (UK)" \
+                          "tr" "Turkish (Türkçe Q)" \
+                          "de" "German (Deutsch)" \
+                          "fr" "French (Français)" \
+                          "es" "Spanish (Español)" \
+                          "it" "Italian (Italiano)" \
+                          "pt" "Portuguese (Português)" \
+                          "ru" "Russian (Русский)" \
+                          "jp" "Japanese (日本語)" \
+                          "kr" "Korean (한국어)" \
+                          "cn" "Chinese (中文)" 3>&1 1>&2 2>&3)
+                      
+                      if [ \$? -eq 0 ] && [ ! -z "\$KB_CHOICE" ]; then
+                          sudo localectl set-x11-keymap \$KB_CHOICE 2>/dev/null || true
+                          case "\$KB_CHOICE" in
+                              "tr") sudo loadkeys trq 2>/dev/null || true ;;
+                              "ru") sudo loadkeys ru 2>/dev/null || true ;;
+                              "de") sudo loadkeys de 2>/dev/null || true ;;
+                              "fr") sudo loadkeys fr 2>/dev/null || true ;;
+                              "es") sudo loadkeys es 2>/dev/null || true ;;
+                              "it") sudo loadkeys it 2>/dev/null || true ;;
+                              *) sudo loadkeys us 2>/dev/null || true ;;
+                          esac
+                          whiptail --title "Success" --msgbox "Keyboard layout successfully changed to \$KB_CHOICE!" 8 50
+                      fi
                       ;;
               esac
           done
