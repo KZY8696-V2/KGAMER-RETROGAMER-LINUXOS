@@ -1,450 +1,393 @@
-name: Build KGAMER-RETROGAMER IMG
+name: Build Ultimate KGAMER PORTAPS4 Smart ISO
 
 on:
   push:
-    branches: [ main ]
   workflow_dispatch:
 
 jobs:
-  build-img:
-    runs-on: ubuntu-latest
+  build-smart-system:
+    runs-on: windows-latest
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Install Dependencies
+      - name: Setup MSYS2 and MinGW Toolchain (MINGW64)
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: git mingw-w64-x86_64-toolchain mingw-w64-x86_64-SDL2 mingw-w64-x86_64-SDL2_ttf
+          suppress-deprecation-warnings: true
+
+      - name: Prepare ISO Directory Structure
         run: |
-          sudo apt-get update
-          sudo apt-get install -y debootstrap qemu-user-static binfmt-support parted dosfstools e2fsprogs squashfs-tools xorriso curl wget git plymouth plymouth-themes
+          New-Item -ItemType Directory -Force -Path "iso_root/roms"
+          New-Item -ItemType Directory -Force -Path "iso_root/bin/shadps4"
+          New-Item -ItemType Directory -Force -Path "iso_root/ui"
 
-      - name: Download Base Debian Arm64 Rootfs & Create Image
+      - name: Download Latest ShadPS4 Windows Build
         run: |
-          # 1. 3GB'lık boş imaj dosyası oluştur
-          dd if=/dev/zero of=KGAMER-RETROGAMER.img bs=1M count=3072
-          
-          # 2. Disk bölümlemesi (MBR / DOS tablosu ve tek partition)
-          parted --script KGAMER-RETROGAMER.img mklabel msdos
-          parted --script KGAMER-RETROGAMER.img mkpart primary ext4 4MiB 100%
-          
-          # 3. --partscan ile loop cihazına bağla
-          LOOP_DEV=$(sudo losetup --find --show --partscan KGAMER-RETROGAMER.img)
-          
-          if [ -b "${LOOP_DEV}p1" ]; then
-              LOOP_PART="${LOOP_DEV}p1"
-          elif [ -b "${LOOP_DEV}1" ]; then
-              LOOP_PART="${LOOP_DEV}1"
-          else
-              LOOP_PART=$(ls ${LOOP_DEV}* | grep -E '[0-9]+$' | head -n 1)
-          fi
-          
-          echo "Using partition: $LOOP_PART"
-          
-          # 4. Dosya sistemini biçimlendir ve bağla
-          sudo mkfs.ext4 -F "$LOOP_PART"
-          mkdir -p mnt
-          sudo mount "$LOOP_PART" mnt
-          
-          # 5. Debootstrap çalıştır
-          sudo debootstrap --arch=arm64 --no-check-gpg --include=qemu-user-static,sudo,systemd,systemd-sysv,udev,kmod,netbase bookworm mnt http://deb.debian.org/debian/
-          sudo cp /usr/bin/qemu-aarch64-static mnt/usr/bin/
+          $url = (Invoke-RestMethod -Uri "https://api.github.com/repos/shadps4-emu/shadps4/releases/latest").assets.browser_download_url | Where-Object { $_ -like "*win64*" } | Select-Object -First 1
+          if (-not $url) { $url = "https://github.com/shadps4-emu/shadps4/releases/download/v0.1.0/shadps4-win64.zip" }
+          Invoke-WebRequest -Uri $url -OutFile "shadps4.zip"
+          Expand-Archive -Path "shadps4.zip" -DestinationPath "iso_root/bin/shadps4" -Force
+          Remove-Item "shadps4.zip"
 
-      - name: Inject KGAMER-RETROGAMER Features, Plymouth Animation & Protections into IMG
+      - name: Create C++ SDL2 XMB Source File (PS4 Theme & Full Config)
         run: |
-          LOOP_DEV=$(sudo losetup -j KGAMER-RETROGAMER.img | cut -d ':' -f1 | head -n 1)
-          
-          if [ -b "${LOOP_DEV}p1" ]; then
-              LOOP_PART="${LOOP_DEV}p1"
-          elif [ -b "${LOOP_DEV}1" ]; then
-              LOOP_PART="${LOOP_DEV}1"
-          else
-              LOOP_PART=$(ls ${LOOP_DEV}* | grep -E '[0-9]+$' | head -n 1)
-          fi
-          
-          echo "Mounting partition: $LOOP_PART"
-          
-          if ! mountpoint -q mnt; then
-              sudo mount "$LOOP_PART" mnt
-          else
-              echo "Partition is already mounted."
-          fi
+          $cppCode = @'
+          #define SDL_MAIN_HANDLED
+          #include <SDL.h>
+          #include <SDL_ttf.h>
+          #include <iostream>
+          #include <vector>
+          #include <string>
+          #include <filesystem>
+          #include <cstdlib>
+          #include <fstream>
 
-          # Chroot ortamı için gerekli mount'lar
-          mountpoint -q mnt/proc || sudo mount -t proc proc mnt/proc
-          mountpoint -q mnt/dev || sudo mount --bind /dev mnt/dev
-          mountpoint -q mnt/dev/pts || sudo mount --bind /dev/pts mnt/dev/pts
-          mountpoint -q mnt/sys || sudo mount --bind /sys mnt/sys
+          namespace fs = std::filesystem;
+          const int SCREEN_WIDTH = 1280;
+          const int SCREEN_HEIGHT = 720;
 
-          # Repodaki frame ile başlayan tüm görselleri Plymouth tema klasörüne aktar
-          sudo mkdir -p mnt/usr/share/plymouth/themes/kgamer-splash
-          sudo find . -maxdepth 2 -type f -iname "*frame*" -exec cp {} mnt/usr/share/plymouth/themes/kgamer-splash/ \; 2>/dev/null || true
+          std::vector<std::string> categories = {"GAMES", "SETTINGS", "SYSTEM"};
+          int currentCat = 0;
+          int selectedSub = 0;
 
-          # Sistem içi kurulacak script ve konfigürasyonları chroot içine aktar
-          sudo mkdir -p mnt/opt/kgamer
-          
-          # Chroot içinde çalışacak kurulum betiği
-          sudo tee mnt/opt/kgamer/setup.sh << 'EOF' > /dev/null
-          export DEBIAN_FRONTEND=noninteractive
+          struct ShadConfig {
+              std::string backend = "Vulkan";
+              std::string resolution = "1080p (Native)";
+              std::string vsync = "Enabled";
+              std::string anisotropic = "16x";
+              std::string audioDriver = "WASAPI Low Latency";
+              std::string logLevel = "Info";
+          } config;
 
-          # apt hızlandırma ve önbellek ayarları
-          echo 'Acquire::Retries "3";' > /etc/apt/apt.conf.d/80-retries
-          echo 'APT::Install-Recommends "false";' > /etc/apt/apt.conf.d/80-recommends
-
-          # 1. Paket kurulumları
-          apt-get update
-          apt-get install -y git e2fsprogs whiptail dialog sudo systemd systemd-sysv plymouth plymouth-themes curl wget tar unzip
-          apt-get install -y linux-image-arm64 u-boot-menu xserver-xorg-core xinit openbox xfce4-panel pcmanfm gvfs gvfs-backends zenity lxterminal picom parted chromium keyboard-configuration build-essential cmake
-
-          # Extlinux Konfigürasyonunu Oluştur
-          mkdir -p /boot/extlinux
-          cat << 'EOT' > /boot/extlinux/extlinux.conf
-          DEFAULT kgamer
-          LABEL kgamer
-            KERNEL /boot/vmlinuz
-            INITRD /boot/initrd.img
-            APPEND root=/dev/vda2 rw console=ttyAMA0 rootwait
-          EOT
-
-          # Plymouth Tema Konfigürasyon Dosyasını Oluştur (.plymouth)
-          cat << 'EOT' > /usr/share/plymouth/themes/kgamer-splash/kgamer-splash.plymouth
-          [Plymouth Theme]
-          Name=KGAMER Boot Animation
-          Description=Custom 150-Frame Retro Boot Animation
-          ModuleName=script
-
-          [script]
-          ImageDir=/usr/share/plymouth/themes/kgamer-splash
-          ScriptFile=/usr/share/plymouth/themes/kgamer-splash/kgamer-splash.script
-          EOT
-
-          # Plymouth Animasyon Script Dosyasını Oluştur (.script)
-          cat << 'EOT' > /usr/share/plymouth/themes/kgamer-splash/kgamer-splash.script
-          item_count = 150;
-          for (i = 1; i <= item_count; i++) {
-              if (i < 10) img_name = "frame_000" + i + ".png";
-              else if (i < 100) img_name = "frame_00" + i + ".png";
-              else img_name = "frame_0" + i + ".png";
-              
-              frames[i] = Image(img_name);
-          }
-
-          screen_width = Window.GetWidth();
-          screen_height = Window.GetHeight();
-          global.frame_index = 0;
-
-          fun refresh_callback () {
-              global.frame_index++;
-              if (global.frame_index > item_count) {
-                  global.frame_index = 1;
-              }
-              
-              my_image = frames[global.frame_index];
-              if (my_image) {
-                  x = (screen_width - my_image.GetWidth()) / 2;
-                  y = (screen_height - my_image.GetHeight()) / 2;
-                  Window.SetBackgroundBlack();
-                  Window.DrawImage(my_image, x, y);
+          void SaveConfigToDisk() {
+              std::ofstream file("..\\bin\\shadps4\\config.toml");
+              if (file.is_open()) {
+                  file << "[Graphics]\n";
+                  file << "backend = \"" << config.backend << "\"\n";
+                  file << "resolution = \"" << config.resolution << "\"\n";
+                  file << "vsync = \"" << config.vsync << "\"\n";
+                  file << "anisotropic = \"" << config.anisotropic << "\"\n";
+                  file << "[Audio]\n";
+                  file << "driver = \"" << config.audioDriver << "\"\n";
+                  file << "[System]\n";
+                  file << "log_level = \"" << config.logLevel << "\"\n";
+                  file.close();
               }
           }
 
-          Plymouth.SetRefreshFunction(refresh_callback);
-          EOT
+          std::vector<std::string> GetGames() {
+              std::vector<std::string> games;
+              std::string romPath = "..\\roms";
+              if (fs::exists(romPath)) {
+                  for (const auto& entry : fs::directory_iterator(romPath)) {
+                      if (entry.is_regular_file()) {
+                          std::string ext = entry.path().extension().string();
+                          if (ext == ".iso" || ext == ".pkg" || ext == ".bin" || ext == ".elf") {
+                              games.push_back(entry.path().filename().string());
+                          }
+                      }
+                  }
+              }
+              if (games.empty()) {
+                  games.push_back("[!] No ROMs Found in \\roms folder");
+              }
+              return games;
+          }
 
-          plymouth-set-default-theme kgamer-splash
-          update-initramfs -u -k all || true
+          int main(int argc, char* argv[]) {
+              SDL_SetMainReady();
+              if (SDL_Init(SDL_INIT_VIDEO) < 0) return 1;
+              if (TTF_Init() < 0) { SDL_Quit(); return 1; }
 
-          # Plymouth tema klasörünü silinmelere ve değişikliklere karşı kilitle
-          chattr -R +i /usr/share/plymouth/themes/kgamer-splash 2>/dev/null || true
+              SDL_Window* window = SDL_CreateWindow(
+                  "KGAMER PORTAPS4 - PS4 Lacivert & Beyaz XMB",
+                  SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
+                  SCREEN_WIDTH, SCREEN_HEIGHT, SDL_WINDOW_SHOWN | SDL_WINDOW_OPENGL
+              );
 
-          # A. EmulationStation Uygulama Otomatik Köprüsü (Dinamik Aktif Kullanıcı Desteğiyle)
-          cat << 'EOT' > /usr/local/bin/update_es_apps.sh
-          #!/bin/bash
-          ACTIVE_USER=$(whoami)
-          if [ "$ACTIVE_USER" = "root" ] && [ -n "$SUDO_USER" ]; then
-              ACTIVE_USER="$SUDO_USER"
-          fi
-          TARGET_HOME=$(eval echo "~$ACTIVE_USER")
-          if [ ! -d "$TARGET_HOME" ]; then
-              TARGET_HOME="$HOME"
-          fi
+              SDL_Renderer* renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
+              
+              TTF_Font* fontLarge = TTF_OpenFont("C:\\Windows\\Fonts\\Arial.ttf", 28);
+              TTF_Font* fontMedium = TTF_OpenFont("C:\\Windows\\Fonts\\Arial.ttf", 18);
+              TTF_Font* fontSmall = TTF_OpenFont("C:\\Windows\\Fonts\\Arial.ttf", 14);
 
-          APPS_DIR="$TARGET_HOME/RetroPie/roms/apps"
-          
-          chattr -i "$APPS_DIR" 2>/dev/null || true
-          mkdir -p "$APPS_DIR"
-          rm -f "$APPS_DIR"/*.sh 2>/dev/null || true
+              bool running = true;
+              SDL_Event e;
 
-          cat << 'EEE' > "$APPS_DIR/Terminal.sh"
-          #!/bin/bash
-          lxterminal
-          EEE
-          chmod +x "$APPS_DIR/Terminal.sh"
-          chattr +i "$APPS_DIR/Terminal.sh" 2>/dev/null || true
+              while (running) {
+                  std::vector<std::string> gamesList = GetGames();
 
-          cat << 'EEE' > "$APPS_DIR/Chromium.sh"
-          #!/bin/bash
-          chromium --no-sandbox --disable-gpu
-          EEE
-          chmod +x "$APPS_DIR/Chromium.sh"
-          chattr +i "$APPS_DIR/Chromium.sh" 2>/dev/null || true
+                  while (SDL_PollEvent(&e) != 0) {
+                      if (e.type == SDL_QUIT) {
+                          running = false;
+                      } else if (e.type == SDL_KEYDOWN) {
+                          switch (e.key.keysym.sym) {
+                              case SDLK_ESCAPE:
+                                  running = false;
+                                  break;
+                              case SDLK_LEFT:
+                                  currentCat = (currentCat - 1 + categories.size()) % categories.size();
+                                  selectedSub = 0;
+                                  break;
+                              case SDLK_RIGHT:
+                                  currentCat = (currentCat + 1) % categories.size();
+                                  selectedSub = 0;
+                                  break;
+                              case SDLK_UP:
+                                  if (selectedSub > 0) selectedSub--;
+                                  break;
+                              case SDLK_DOWN:
+                                  if (currentCat == 0 && selectedSub < (int)gamesList.size() - 1) selectedSub++;
+                                  else if (currentCat == 1 && selectedSub < 5) selectedSub++;
+                                  else if (currentCat == 2 && selectedSub < 2) selectedSub++;
+                                  break;
+                              case SDLK_RETURN:
+                                  if (currentCat == 0 && !gamesList.empty()) {
+                                      if (gamesList[selectedSub].rfind("[!]", 0) != 0) {
+                                          std::string cmd = "..\\bin\\shadps4\\shadps4.exe \"..\\roms\\" + gamesList[selectedSub] + "\"";
+                                          system(cmd.c_str());
+                                      }
+                                  } else if (currentCat == 1) {
+                                      if (selectedSub == 0) config.backend = (config.backend == "Vulkan") ? "OpenGL" : "Vulkan";
+                                      else if (selectedSub == 1) config.resolution = (config.resolution == "1080p (Native)") ? "4K Scale" : "1080p (Native)";
+                                      else if (selectedSub == 2) config.vsync = (config.vsync == "Enabled") ? "Disabled" : "Enabled";
+                                      else if (selectedSub == 3) config.anisotropic = (config.anisotropic == "16x") ? "Off" : "16x";
+                                      else if (selectedSub == 4) config.audioDriver = (config.audioDriver == "WASAPI Low Latency") ? "DirectSound" : "WASAPI Low Latency";
+                                      else if (selectedSub == 5) config.logLevel = (config.logLevel == "Info") ? "Debug" : "Info";
+                                      SaveConfigToDisk();
+                                  } else if (currentCat == 2) {
+                                      if (selectedSub == 0) system("start ..\\bin\\shadps4\\shadps4.exe");
+                                      else if (selectedSub == 1) system("start cmd.exe");
+                                      else if (selectedSub == 2) system("start pcmanfm.exe");
+                                  }
+                                  break;
+                          }
+                      }
+                  }
 
-          cat << 'EEE' > "$APPS_DIR/PCManFM_Filemanager.sh"
-          #!/bin/bash
-          pcmanfm
-          EEE
-          chmod +x "$APPS_DIR/PCManFM_Filemanager.sh"
-          chattr +i "$APPS_DIR/PCManFM_Filemanager.sh" 2>/dev/null || true
+                  SDL_SetRenderDrawColor(renderer, 0, 24, 64, 255);
+                  SDL_RenderClear(renderer);
 
-          for desktop_file in /usr/share/applications/*.desktop; do
-              if [ -f "$desktop_file" ]; then
-                  name=$(grep -m 1 "^Name=" "$desktop_file" | cut -d'=' -f2-)
-                  exec_cmd=$(grep -m 1 "^Exec=" "$desktop_file" | cut -d'=' -f2- | awk '{print $1}')
-                  if [ ! -z "$name" ] && [ ! -z "$exec_cmd" ]; then
-                      safe_name=$(echo "$name" | tr '/' '_' | tr ' ' '_')
-                      cat << EEE > "$APPS_DIR/$safe_name.sh"
-          #!/bin/bash
-          $exec_cmd
-          EEE
-                      chmod +x "$APPS_DIR/$safe_name.sh"
-                      chattr +i "$APPS_DIR/$safe_name.sh" 2>/dev/null || true
-                  fi
-              fi
-          done
-          chattr +i "$APPS_DIR" 2>/dev/null || true
-          EOT
-          chmod +x /usr/local/bin/update_es_apps.sh
-          chattr +i /usr/local/bin/update_es_apps.sh
+                  int xPos = 100;
+                  for (size_t i = 0; i < categories.size(); ++i) {
+                      SDL_Color textColor = (i == (size_t)currentCat) ? SDL_Color{255, 255, 255, 255} : SDL_Color{140, 170, 210, 255};
+                      if (fontLarge) {
+                          SDL_Surface* surf = TTF_RenderText_Blended(fontLarge, categories[i].c_str(), textColor);
+                          SDL_Texture* tex = SDL_CreateTextureFromSurface(renderer, surf);
+                          SDL_Rect destRect = {xPos, 50, surf->w, surf->h};
+                          SDL_RenderCopy(renderer, tex, NULL, &destRect);
+                          SDL_FreeSurface(surf);
+                          SDL_DestroyTexture(tex);
+                      }
+                      xPos += 250;
+                  }
 
-          # B. Modüler Reinstall & Onarım Menüsü (Çoklu Kaynak / Dinamik Yol Destekli)
-          cat << 'EOT' > /usr/local/bin/kgamer_retropie_reinstall.sh
-          #!/bin/bash
-          ACTIVE_USER=$(whoami)
-          if [ "$ACTIVE_USER" = "root" ] && [ -n "$SUDO_USER" ]; then
-              ACTIVE_USER="$SUDO_USER"
-          fi
-          TARGET_HOME=$(eval echo "~$ACTIVE_USER")
-          if [ ! -d "$TARGET_HOME" ]; then
-              TARGET_HOME="$HOME"
-          fi
+                  SDL_SetRenderDrawColor(renderer, 255, 255, 255, 255);
+                  SDL_Rect lineRect = {100, 90, 1080, 2};
+                  SDL_RenderFillRect(renderer, &lineRect);
 
-          while true; do
-              CHOICES=$(whiptail --title "KGAMER-RETROGAMER REPAIR & SETUP ($ACTIVE_USER)" --checklist \
-                  "Select components to reinstall/repair:" 22 75 6 \
-                  "RETROPIE" "Reinstall RetroPie Core & EmulationStation" OFF \
-                  "SETUP_SCRIPT" "Redownload & Setup RetroPie-Setup Script" OFF \
-                  "X11_SYSTEM" "Reinstall X11, Openbox & Bottom XFCE Panel" OFF \
-                  "APPS_LINKS" "Regenerate Locked Terminal, Chromium & Apps" ON 3>&1 1>&2 2>&3)
+                  int yPos = 140;
+                  if (currentCat == 0) {
+                      for (size_t i = 0; i < gamesList.size(); ++i) {
+                          bool isSelected = (i == (size_t)selectedSub);
+                          SDL_Color boxColor = isSelected ? SDL_Color{0, 64, 160, 255} : SDL_Color{0, 32, 80, 255};
+                          SDL_Color fgColor = {255, 255, 255, 255};
+                          SDL_Rect itemBox = {100, yPos, 800, 45};
+                          SDL_SetRenderDrawColor(renderer, boxColor.r, boxColor.g, boxColor.b, boxColor.a);
+                          SDL_RenderFillRect(renderer, &itemBox);
+                          if (isSelected) {
+                              SDL_SetRenderDrawColor(renderer, 255, 255, 255, 255);
+                              SDL_RenderDrawRect(renderer, &itemBox);
+                          }
+                          if (fontMedium) {
+                              SDL_Surface* surf = TTF_RenderText_Blended(fontMedium, gamesList[i].c_str(), fgColor);
+                              SDL_Texture* tex = SDL_CreateTextureFromSurface(renderer, surf);
+                              SDL_Rect textRect = {120, yPos + 12, surf->w, surf->h};
+                              SDL_RenderCopy(renderer, tex, NULL, &textRect);
+                              SDL_FreeSurface(surf);
+                              SDL_DestroyTexture(tex);
+                          }
+                          yPos += 55;
+                      }
+                  } else if (currentCat == 1) {
+                      std::vector<std::string> settings = {
+                          "Graphics Backend: " + config.backend,
+                          "Resolution Scale: " + config.resolution,
+                          "VSync: " + config.vsync,
+                          "Anisotropic Filtering: " + config.anisotropic,
+                          "Audio Driver: " + config.audioDriver,
+                          "Log Level: " + config.logLevel
+                      };
+                      for (size_t i = 0; i < settings.size(); ++i) {
+                          bool isSelected = (i == (size_t)selectedSub);
+                          SDL_Color boxColor = isSelected ? SDL_Color{0, 64, 160, 255} : SDL_Color{0, 32, 80, 255};
+                          SDL_Color fgColor = {255, 255, 255, 255};
+                          SDL_Rect itemBox = {100, yPos, 800, 45};
+                          SDL_SetRenderDrawColor(renderer, boxColor.r, boxColor.g, boxColor.b, boxColor.a);
+                          SDL_RenderFillRect(renderer, &itemBox);
+                          if (isSelected) {
+                              SDL_SetRenderDrawColor(renderer, 255, 255, 255, 255);
+                              SDL_RenderDrawRect(renderer, &itemBox);
+                          }
+                          if (fontMedium) {
+                              SDL_Surface* surf = TTF_RenderText_Blended(fontMedium, settings[i].c_str(), fgColor);
+                              SDL_Texture* tex = SDL_CreateTextureFromSurface(renderer, surf);
+                              SDL_Rect textRect = {120, yPos + 12, surf->w, surf->h};
+                              SDL_RenderCopy(renderer, tex, NULL, &textRect);
+                              SDL_FreeSurface(surf);
+                              SDL_DestroyTexture(tex);
+                          }
+                          yPos += 55;
+                      }
+                  } else if (currentCat == 2) {
+                      std::vector<std::string> tools = {
+                          "Launch Full ShadPS4 Dashboard",
+                          "Open KTERMINAL (Command Prompt)",
+                          "Open PCManFM (File Manager)"
+                      };
+                      for (size_t i = 0; i < tools.size(); ++i) {
+                          bool isSelected = (i == (size_t)selectedSub);
+                          SDL_Color boxColor = isSelected ? SDL_Color{0, 64, 160, 255} : SDL_Color{0, 32, 80, 255};
+                          SDL_Color fgColor = {255, 255, 255, 255};
+                          SDL_Rect itemBox = {100, yPos, 800, 45};
+                          SDL_SetRenderDrawColor(renderer, boxColor.r, boxColor.g, boxColor.b, boxColor.a);
+                          SDL_RenderFillRect(renderer, &itemBox);
+                          if (isSelected) {
+                              SDL_SetRenderDrawColor(renderer, 255, 255, 255, 255);
+                              SDL_RenderDrawRect(renderer, &itemBox);
+                          }
+                          if (fontMedium) {
+                              SDL_Surface* surf = TTF_RenderText_Blended(fontMedium, tools[i].c_str(), fgColor);
+                              SDL_Texture* tex = SDL_CreateTextureFromSurface(renderer, surf);
+                              SDL_Rect textRect = {120, yPos + 12, surf->w, surf->h};
+                              SDL_RenderCopy(renderer, tex, NULL, &textRect);
+                              SDL_FreeSurface(surf);
+                              SDL_DestroyTexture(tex);
+                          }
+                          yPos += 55;
+                      }
+                  }
 
-              exitstatus=$?
-              if [ $exitstatus -ne 0 ]; then
-                  exit 0
-              fi
+                  if (fontSmall) {
+                      SDL_Surface* surf = TTF_RenderText_Blended(fontSmall, "CONTROLS: [LEFT/RIGHT] Change Category | [UP/DOWN] Navigate | [ENTER] Select / Modify | [ESC] Exit", SDL_Color{180, 200, 230, 255});
+                      SDL_Texture* tex = SDL_CreateTextureFromSurface(renderer, surf);
+                      SDL_Rect footerRect = {100, 660, surf->w, surf->h};
+                      SDL_RenderCopy(renderer, tex, NULL, &footerRect);
+                      SDL_FreeSurface(surf);
+                      SDL_DestroyTexture(tex);
+                  }
 
-              if [ -z "$CHOICES" ]; then
-                  whiptail --title "Warning" --msgbox "No option selected!" 8 40
-                  continue
-              fi
+                  SDL_RenderPresent(renderer);
+                  SDL_Delay(16);
+              }
 
-              (
-                if [[ "$CHOICES" =~ "SETUP_SCRIPT" ]] || [ ! -d "$TARGET_HOME/RetroPie-Setup" ]; then
-                    echo 10; rm -rf "$TARGET_HOME/RetroPie-Setup"
-                    
-                    git clone --depth=1 https://github.com/RetroPie/RetroPie-Setup.git "$TARGET_HOME/RetroPie-Setup" || \
-                    git clone --depth=1 https://gitlab.com/RetroPie/RetroPie-Setup.git "$TARGET_HOME/RetroPie-Setup" || \
-                    git clone --depth=1 https://github.com/RetroPie/RetroPie-Setup.git --branch master "$TARGET_HOME/RetroPie-Setup" || \
-                    wget -O /tmp/retropie-setup.zip https://netcologne.dl.sourceforge.net/project/retropie/RetroPie-Setup.zip || \
-                    wget -O /tmp/retropie-setup.tar.gz https://github.com/RetroPie/RetroPie-Setup/archive/refs/heads/master.tar.gz || \
-                    { echo "All RetroPie download mirrors failed!"; exit 1; }
+              if (fontLarge) TTF_CloseFont(fontLarge);
+              if (fontMedium) TTF_CloseFont(fontMedium);
+              if (fontSmall) TTF_CloseFont(fontSmall);
+              SDL_DestroyRenderer(renderer);
+              SDL_DestroyWindow(window);
+              TTF_Quit();
+              SDL_Quit();
+              return 0;
+          }
+          '@
+          Set-Content -Path "iso_root/ui/xmb_launcher.cpp" -Value $cppCode
 
-                    if [ -f /tmp/retropie-setup.zip ]; then
-                        unzip -q /tmp/retropie-setup.zip -d /tmp/
-                        mv /tmp/RetroPie-Setup-master "$TARGET_HOME/RetroPie-Setup" 2>/dev/null || mv /tmp/RetroPie-Setup-* "$TARGET_HOME/RetroPie-Setup"
-                        rm -f /tmp/retropie-setup.zip
-                    elif [ -f /tmp/retropie-setup.tar.gz ]; then
-                        tar -xzf /tmp/retropie-setup.tar.gz -C /tmp/
-                        mv /tmp/RetroPie-Setup-master "$TARGET_HOME/RetroPie-Setup" 2>/dev/null || mv /tmp/RetroPie-Setup-* "$TARGET_HOME/RetroPie-Setup"
-                        rm -f /tmp/retropie-setup.tar.gz
-                    fi
-                    chown -R "$ACTIVE_USER:$ACTIVE_USER" "$TARGET_HOME/RetroPie-Setup" 2>/dev/null || true
-                fi
-
-                cd "$TARGET_HOME/RetroPie-Setup" || exit 1
-
-                if [[ "$CHOICES" =~ "RETROPIE" ]]; then
-                    echo 40; DEBIAN_FRONTEND=noninteractive ./retropie_packages.sh setup basic_install
-                    ./retropie_packages.sh emulationstation
-                    ./retropie_packages.sh retropiemenu
-                fi
-
-                if [[ "$CHOICES" =~ "X11_SYSTEM" ]]; then
-                    echo 80; apt-get install --reinstall -y xserver-xorg-core xinit openbox xfce4-panel pcmanfm gvfs gvfs-backends zenity lxterminal picom chromium
-                fi
-
-                if [[ "$CHOICES" =~ "APPS_LINKS" ]]; then
-                    echo 95; /usr/local/bin/update_es_apps.sh
-                fi
-
-                echo 100;
-              ) | whiptail --gauge "Restoring protected components safely..." 6 60 0
-
-              whiptail --title "Success" --msgbox "Restoration completed safely!" 8 50
-              break
-          done
-          EOT
-          chmod +x /usr/local/bin/kgamer_retropie_reinstall.sh
-          chattr +i /usr/local/bin/kgamer_retropie_reinstall.sh
-
-          # C. EmulationStation Çıkış ve Çoklu Dil Klavye Destekli Sistem Menüsü
-          cat << 'EOT' > /usr/local/bin/kgamer_boot_menu.sh
-          #!/bin/bash
-          while true; do
-              CHOICE=$(whiptail --title "KGAMER-RETROGAMER SYSTEM MENU (OPENBOX X)" --menu "EmulationStation Quit Action / Select Mode:" 18 65 5 \
-                  "1" "Return to EmulationStation" \
-                  "2" "OPENBOX X Desktop GUI (Openbox + Bottom XFCE Panel)" \
-                  "3" "RetroPie Setup Script" \
-                  "4" "Modular Reinstall & Repair Menu" \
-                  "5" "Change Keyboard Layout (All Languages)" 3>&1 1>&2 2>&3)
-
-              exitstatus=$?
-              if [ $exitstatus -ne 0 ]; then
-                  emulationstation
-                  continue
-              fi
-
-              case "$CHOICE" in
-                  "1")
-                      emulationstation
-                      ;;
-                  "2")
-                      xinit openbox -- :0
-                      ;;
-                  "3")
-                      ACTIVE_USER=$(whoami)
-                      if [ "$ACTIVE_USER" = "root" ] && [ -n "$SUDO_USER" ]; then
-                          ACTIVE_USER="$SUDO_USER"
-                      fi
-                      TARGET_HOME=$(eval echo "~$ACTIVE_USER")
-                      cd "$TARGET_HOME/RetroPie-Setup" && ./retropie_setup.sh
-                      ;;
-                  "4")
-                      /usr/local/bin/kgamer_retropie_reinstall.sh
-                      ;;
-                  "5")
-                      KB_CHOICE=$(whiptail --title "Select Keyboard Layout" --menu "Choose your keyboard layout:" 22 60 12 \
-                          "us" "English (US)" \
-                          "gb" "English (UK)" \
-                          "tr" "Turkish (Türkçe Q)" \
-                          "de" "German (Deutsch)" \
-                          "fr" "French (Français)" \
-                          "es" "Spanish (Español)" \
-                          "it" "Italian (Italiano)" \
-                          "pt" "Portuguese (Português)" \
-                          "ru" "Russian (Русский)" \
-                          "jp" "Japanese (日本語)" \
-                          "kr" "Korean (한국어)" \
-                          "cn" "Chinese (中文)" 3>&1 1>&2 2>&3)
-                      
-                      if [ $? -eq 0 ] && [ ! -z "$KB_CHOICE" ]; then
-                          localectl set-x11-keymap $KB_CHOICE 2>/dev/null || true
-                          case "$KB_CHOICE" in
-                              "tr") loadkeys trq 2>/dev/null || true ;;
-                              "ru") loadkeys ru 2>/dev/null || true ;;
-                              "de") loadkeys de 2>/dev/null || true ;;
-                              "fr") loadkeys fr 2>/dev/null || true ;;
-                              "es") loadkeys es 2>/dev/null || true ;;
-                              "it") loadkeys it 2>/dev/null || true ;;
-                              *) loadkeys us 2>/dev/null || true ;;
-                          esac
-                          whiptail --title "Success" --msgbox "Keyboard layout successfully changed to $KB_CHOICE!" 8 50
-                      fi
-                      ;;
-              esac
-          done
-          EOT
-          chmod +x /usr/local/bin/kgamer_boot_menu.sh
-          chattr +i /usr/local/bin/kgamer_boot_menu.sh
-
-          # D. XFCE Panel Aşağı Açılan Menü ve Alt Konumlandırma (Tüm kullanıcı iskeletine şablon olarak ekle)
-          mkdir -p /etc/skel/.config/openbox /etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml
-          
-          cat << 'EOT' > /etc/skel/.config/openbox/autostart
-          pcmanfm --desktop &
-          picom -b &
-          xfce4-panel &
-          EOT
-
-          cat << 'EOT' > /etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-panel.xml
-          <?xml version="1.0" encoding="UTF-8"?>
-          <channel name="xfce4-panel" version="1.0">
-            <property name="configversion" type="int" value="2"/>
-            <property name="panels" type="array">
-              <value type="int" value="1"/>
-            </property>
-            <property name="panel-1" type="empty">
-              <property name="position" type="string" value="p=12;x=0;y=0"/>
-              <property name="length" type="uint" value="100"/>
-              <property name="position-locked" type="bool" value="true"/>
-              <property name="size" type="uint" value="32"/>
-              <property name="mode" type="uint" value="0"/>
-              <property name="span-monitors" type="bool" value="true"/>
-            </property>
-          </channel>
-          EOT
-
-          echo 'while true; do /usr/local/bin/kgamer_boot_menu.sh; done' >> /etc/skel/.bashrc
-
-          # E. Tek Seferlik Güvenli Disk Genişletme Servisi
-          cat << 'EOT' > /usr/local/bin/kgamer-expand.sh
-          #!/bin/bash
-          ROOT_PART=$(findmnt / -o SOURCE -n)
-          DISK_DEV=$(echo "$ROOT_PART" | sed 's/[0-9]*//g' | sed 's/p$//')
-          PART_NUM=$(echo "$ROOT_PART" | grep -o '[0-9]*$')
-          if [ -n "$DISK_DEV" ] && [ -n "$PART_NUM" ]; then
-              parted --script "$DISK_DEV" resizepart "$PART_NUM" 100% || true
-              resize2fs "$ROOT_PART" || true
-              systemctl disable kgamer-expand
-              rm -f /etc/systemd/system/kgamer-expand.service
-              rm -f /usr/local/bin/kgamer-expand.sh
-          fi
-          EOT
-          chmod +x /usr/local/bin/kgamer-expand.sh
-
-          cat << 'EOT' > /etc/systemd/system/kgamer-expand.service
-          [Unit]
-          Description=KGAMER-RETROGAMER Secure One-Time Auto-Expansion Service
-          After=local-fs.target
-          [Service]
-          Type=oneshot
-          ExecStart=/usr/local/bin/kgamer-expand.sh
-          [Install]
-          WantedBy=multi-user.target
-          EOT
-
-          systemctl enable kgamer-expand.service
-          EOF
-
-          # Chroot içine girip kurulum betiğini çalıştır
-          sudo chmod +x mnt/opt/kgamer/setup.sh
-          sudo chroot mnt /opt/kgamer/setup.sh
-          sudo rm -f mnt/opt/kgamer/setup.sh
-
-      - name: Cleanup and Unmount IMG
-        if: always()
+      - name: Compile C++ SDL2 XMB Launcher using MINGW64 MinGW
+        shell: msys2 {0}
         run: |
-          # Güvenli unmount
-          sudo umount mnt/proc 2>/dev/null || true
-          sudo umount mnt/dev/pts 2>/dev/null || true
-          sudo umount mnt/dev 2>/dev/null || true
-          sudo umount mnt/sys 2>/dev/null || true
-          sudo umount mnt 2>/dev/null || true
+          x86_64-w64-mingw32-g++ -O3 iso_root/ui/xmb_launcher.cpp -o iso_root/ui/xmb_launcher.exe \
+              -I/mingw64/include/SDL2 \
+              -L/mingw64/lib \
+              -lmingw32 -lSDL2main -lSDL2 -lSDL2_ttf -mwindows
           
-          # Loop cihazını serbest bırak
-          LOOP_DEV=$(sudo losetup -j KGAMER-RETROGAMER.img | cut -d ':' -f1 | head -n 1)
-          if [ -n "$LOOP_DEV" ]; then
-              sudo losetup -d "$LOOP_DEV" 2>/dev/null || true
-          fi
+          cp /mingw64/bin/SDL2.dll iso_root/ui/
+          cp /mingw64/bin/SDL2_ttf.dll iso_root/ui/
+          cp /mingw64/bin/libfreetype-6.dll iso_root/ui/ 2>/dev/null || true
+          cp /mingw64/bin/zlib1.dll iso_root/ui/ 2>/dev/null || true
+          cp /mingw64/bin/libbz2-1.dll iso_root/ui/ 2>/dev/null || true
+          cp /mingw64/bin/libpng16-16.dll iso_root/ui/ 2>/dev/null || true
+          cp /mingw64/bin/libharfbuzz-0.dll iso_root/ui/ 2>/dev/null || true
+          cp /mingw64/bin/libbrotlidec.dll iso_root/ui/ 2>/dev/null || true
+          cp /mingw64/bin/libbrotlicommon.dll iso_root/ui/ 2>/dev/null || true
+          cp /mingw64/bin/libgraphite2.dll iso_root/ui/ 2>/dev/null || true
 
-      - name: Upload IMG Artifact
+      - name: Create Autorun.inf and setup.bat
+        run: |
+          $autorun = @"
+          [autorun]
+          open=setup.bat
+          icon=ui\xmb_launcher.exe,0
+          label=KGAMER PORTAPS4 XMB
+          action=Launch KGAMER XMB Console
+          "@
+          Set-Content -Path "iso_root/Autorun.inf" -Value $autorun
+
+          $setup = @"
+          @echo off
+          TITLE KGAMER PORTAPS4 - Ultimate SDL2 XMB Edition
+          color 0B
+          echo [1/3] Checking system components...
+
+          sc query com.docker.service >nul 2>&1
+          if %errorlevel% neq 0 (
+              echo [!] Docker Desktop not found. Installing automatically via winget...
+              winget install -e --id Docker.DockerDesktop --accept-package-agreements --accept-source-agreements
+              echo [+] Docker installed successfully. Please restart your PC and run again!
+              pause
+              exit /b
+          )
+
+          echo [2/3] Starting Docker service in background...
+          net start com.docker.service >nul 2>&1
+
+          :CHECK_DOCKER
+          docker info >nul 2>&1
+          if %errorlevel% neq 0 (
+              timeout /t 3 /nobreak >nul
+              goto CHECK_DOCKER
+          )
+
+          echo [3/3] Launching KGAMER SDL2 XMB Dashboard...
+          start "" "%~dp0ui\xmb_launcher.exe"
+
+          echo [+] KGAMER PORTAPS4 system is fully active!
+          exit
+          "@
+          Set-Content -Path "iso_root/setup.bat" -Value $setup
+
+      - name: Generate ISO via Python pycdlib
+        run: |
+          pip install pycdlib --quiet
+          python -c "
+          import pycdlib, os
+          iso = pycdlib.PyCdlib()
+          iso.new(joliet=3)
+          root_dir = 'iso_root'
+          for root, dirs, files in os.walk(root_dir):
+              for d in dirs:
+                  full_path = os.path.join(root, d)
+                  rel_path = os.path.relpath(full_path, root_dir)
+                  iso_path = '/' + rel_path.replace(os.sep, '/').upper()
+                  iso.add_directory(iso_path)
+          for root, dirs, files in os.walk(root_dir):
+              for file in files:
+                  full_path = os.path.join(root, file)
+                  rel_path = os.path.relpath(full_path, root_dir)
+                  iso_path = '/' + rel_path.replace(os.sep, '/').upper() + ';1'
+                  iso.add_file(full_path, iso_path)
+          iso.write('kgamer-portaps4-ultimate.iso')
+          iso.close()
+          print('[+] kgamer-portaps4-ultimate.iso basariyla olusturuldu!')
+          "
+          Get-Item "kgamer-portaps4-ultimate.iso"
+
+      - name: Upload ISO Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: KGAMER-RETROGAMER
-          path: KGAMER-RETROGAMER.img
+          name: KGAMER-PORTAPS4-Ultimate-ISO
+          path: kgamer-portaps4-ultimate.iso
