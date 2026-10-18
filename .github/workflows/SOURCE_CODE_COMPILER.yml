@@ -1,4 +1,4 @@
-name: Build KGAMER-RETROGAMER-LINUXOS System
+name: Build KGAMER-RETROGAMER-LINUXOS Bootable .IMG Image
 
 on:
   push:
@@ -6,29 +6,62 @@ on:
   workflow_dispatch:
 
 jobs:
-  build-linuxos-img:
+  build-rpi-image:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Prepare KGAMER-RETROGAMER-LINUXOS Payload
+      - name: Install Image Building Dependencies
         run: |
-          echo "Preparing KGAMER-RETROGAMER-LINUXOS image payload..."
+          sudo apt-get update
+          sudo apt-get install -y parted kpartx qemu-user-static wget curl unzip zip dosfstools exfat-fuse exfat-utils
+
+      - name: Build and Embed into Raspberry Pi Lite Image
+        run: |
+          echo "=== KGAMER-RETROGAMER-LINUXOS .IMG BUILD STARTED ==="
+
+          # 1. Resmi Raspberry Pi OS Lite İmajını İndir (En güncel Lite sürüm)
+          IMG_URL="https://downloads.raspberrypi.org/raspios_lite_arm64/images/raspios_lite_arm64-2024-03-15/2024-03-15-raspios-bookworm-arm64-lite.img.xz"
+          # Eğer armhf istersen armhf linki kullanılabilir, varsayılan olarak modern arm64 Lite seçilmiştir.
           
-          THEME_DIR="kgamer-boot"
-          mkdir -p "$THEME_DIR"
+          echo "Downloading Raspberry Pi OS Lite image..."
+          wget -O raspios-lite.img.xz "$IMG_URL" || wget -O raspios-lite.img.xz "https://downloads.raspberrypi.org/raspios_lite_arm64/latest"
+          
+          # Arşivi Çöz
+          if [[ "$(file -b raspios-lite.img.xz)" == *"XZ"* ]]; then
+              unxz raspios-lite.img.xz
+          else
+              mv raspios-lite.img.xz raspios-lite.img
+          fi
+
+          IMG_FILE=$(ls *.img)
+          echo "Image file: $IMG_FILE"
+
+          # 2. İmajı Loop Cihazına Bağla (Mount)
+          LOOP_DEV=$(sudo losetup --find --show "$IMG_FILE")
+          sudo partx -a "$LOOP_DEV"
+          sleep 3
+
+          # Kök dizin (rootfs) partition'ını bul ve mount et
+          ROOT_PART="${LOOP_DEV}p2"
+          mkdir -p mnt
+          sudo mount "$ROOT_PART" mnt
+
+          # 3. Blender Plymouth Animasyon Dosyalarını Hazırla ve İmaja Göm
+          THEME_DIR="mnt/usr/share/plymouth/themes/kgamer-boot"
+          sudo mkdir -p "$THEME_DIR"
           
           if [ -f "frame_0001.png" ]; then
-              cp frame_*.png "$THEME_DIR/"
-              echo "150 Blender frames successfully copied."
+              sudo cp frame_*.png "$THEME_DIR/"
+              echo "150 Blender frames embedded into image."
           else
-              echo "ERROR: frame_0001.png not found!"
+              echo "ERROR: frame_0001.png not found in repository!"
               exit 1
           fi
 
-          # Plymouth Theme Configuration (30 FPS)
-          cat << 'EOF' > "$THEME_DIR/kgamer-boot.plymouth"
+          # Plymouth .plymouth Config
+          sudo bash -c "cat << 'EOF' > $THEME_DIR/kgamer-boot.plymouth
           [Plymouth Theme]
           Name=KGAMER-RETROGAMER-LINUXOS 30FPS Boot
           Description=KGAMER-RETROGAMER-LINUXOS Blender 30 FPS Slideshow Theme
@@ -38,10 +71,10 @@ jobs:
           ImageDir=/usr/share/plymouth/themes/kgamer-boot
           Duration=0.033
           ScriptFile=/usr/share/plymouth/themes/kgamer-boot/kgamer-boot.script
-          EOF
+          EOF"
 
-          # Plymouth Animation Script (150 Frames)
-          cat << 'EOF' > "$THEME_DIR/kgamer-boot.script"
+          # Plymouth 30 FPS Script
+          sudo bash -c "cat << 'EOF' > $THEME_DIR/kgamer-boot.script
           screen_width = Window.GetWidth();
           screen_height = Window.GetHeight();
 
@@ -49,9 +82,9 @@ jobs:
           max_frames = 150;
 
           fun load_frame(n) {
-              if (n < 10) filename = "frame_000" + n + ".png";
-              else if (n < 100) filename = "frame_00" + n + ".png";
-              else filename = "frame_0" + n + ".png";
+              if (n < 10) filename = \"frame_000\" + n + \".png\";
+              else if (n < 100) filename = \"frame_00\" + n + \".png\";
+              else filename = \"frame_0\" + n + \".png\";
               
               return Image(filename);
           }
@@ -71,75 +104,70 @@ jobs:
           }
           
           Plymouth.SetRefreshFunction(refresh_callback);
-          EOF
+          EOF"
 
-          # Kullanıcı Bildirimli ve Kaynak Kod Kaynaklı (4.8.zip) Kurulum Betiği
-          cat << 'EOF' > kgamer-setup.sh
+          # 4. İlk Açılış Kurulum Betiğini (`kgamer-setup.sh`) ve Servisini İmaja Göm
+          sudo mkdir -p mnt/opt/kgamer
+          sudo bash -c "cat << 'EOF' > mnt/opt/kgamer/kgamer-setup.sh
           #!/bin/bash
-          if [ "\$EUID" -ne 0 ]; then
-            echo "Root privileges required!"
+          if [ \"\$EUID\" -ne 0 ]; then
             exit 1
           fi
 
-          echo "=== KGAMER-RETROGAMER-LINUXOS AUTO-INSTALL STARTED ==="
-
           ARCH=\$(uname -m)
-          if [ "\$ARCH" = "aarch64" ] || [ "\$ARCH" = "arm64" ]; then
-              RETROPIE_ARCH="arm64"
+          if [ \"\$ARCH\" = \"aarch64\" ] || [ \"\$ARCH\" = \"arm64\" ]; then
+              RETROPIE_ARCH=\"arm64\"
           else
-              RETROPIE_ARCH="armhf"
+              RETROPIE_ARCH=\"armhf\"
           fi
 
-          CONFIG_DIR="/opt/kgamer"
-          APPS_DIR="\$CONFIG_DIR/apps"
-          BACKUP_APPS_DIR="/opt/kgamer/backup_apps"
-          PLYMOUTH_THEME_DIR="/usr/share/plymouth/themes/kgamer-boot"
+          CONFIG_DIR=\"/opt/kgamer\"
+          APPS_DIR=\"\$CONFIG_DIR/apps\"
+          BACKUP_APPS_DIR=\"/opt/kgamer/backup_apps\"
+          PLYMOUTH_THEME_DIR=\"/usr/share/plymouth/themes/kgamer-boot\"
           
-          mkdir -p "\$APPS_DIR"
-          mkdir -p "\$BACKUP_APPS_DIR"
-          mkdir -p "\$PLYMOUTH_THEME_DIR"
+          mkdir -p \"\$APPS_DIR\"
+          mkdir -p \"\$BACKUP_APPS_DIR\"
+          mkdir -p \"\$PLYMOUTH_THEME_DIR\"
 
-          # Yükleme Çubuğu (Gauge) ile Adım Adım Otomatik Kurulum
+          # Yükleme Çubuğu (Gauge) ile Otomatik Paket Kurulumu
           {
-              echo "10"
-              echo "==> Updating system package lists..."
+              echo \"10\"
+              echo \"==> Updating package lists...\"
               apt-get update -y > /dev/null 2>&1
 
-              echo "30"
-              echo "==> Installing Dialog, Openbox, and XFCE Panel..."
+              echo \"30\"
+              echo \"==> Installing Dialog, Openbox, and XFCE Panel...\"
               apt-get install -y dialog git wget curl unzip xfce4-panel openbox > /dev/null 2>&1
 
-              echo "50"
-              echo "==> Installing Plymouth Boot Engine & Themes..."
+              echo \"50\"
+              echo \"==> Installing Plymouth Boot Engine & Themes...\"
               apt-get install -y plymouth plymouth-themes > /dev/null 2>&1
+              plymouth-set-default-theme -R kgamer-boot > /dev/null 2>&1
+              chattr -R +i \"\$PLYMOUTH_THEME_DIR\" 2>/dev/null || true
 
-              echo "70"
-              echo "==> Installing Chromium Browser & PCManFM File Manager..."
+              echo \"75\"
+              echo \"==> Installing Chromium Browser & PCManFM File Manager...\"
               apt-get install -y chromium pcmanfm > /dev/null 2>&1
 
-              echo "85"
-              echo "==> Deploying and locking Plymouth 30FPS Theme..."
-              cp -r kgamer-boot/* "\$PLYMOUTH_THEME_DIR/" 2>/dev/null || true
-              plymouth-set-default-theme -R kgamer-boot > /dev/null 2>&1
-              chattr -R +i "\$PLYMOUTH_THEME_DIR" 2>/dev/null || true
-
-              echo "95"
-              echo "==> Configuring XFCE Bottom Panel alignment..."
+              echo \"90\"
+              echo \"==> Configuring XFCE Bottom Panel alignment...\"
               pkill xfce4-panel 2>/dev/null || true
-              xfconf-query -c xfce4-panel -p /panels/panel-1/position -s "p=6;x=0;y=0" 2>/dev/null || true
+              xfconf-query -c xfce4-panel -p /panels/panel-1/position -s \"p=6;x=0;y=0\" 2>/dev/null || true
               xfconf-query -c xfce4-panel -p /panels/panel-1/position-locked -s true 2>/dev/null || true
               
-              echo "100"
-              echo "==> KGAMER-RETROGAMER-LINUXOS preparation complete!"
-          } | dialog --title "KGAMER-RETROGAMER-LINUXOS Setup Manager" --gauge "Installing system components and Plymouth animation..." 8 65 0
+              echo \"100\"
+              echo \"==> KGAMER-RETROGAMER-LINUXOS base setup completed!\"
+          } | dialog --title \"KGAMER-RETROGAMER-LINUXOS Setup\" --gauge \"Configuring system components...\" 8 65 0
 
-          # Protected EmulationStation Shortcuts (Terminal, Chromium, PCManFM)
+          # Kısayollar ve Desktop Games / Apps Klasörleri
           create_es_shortcuts() {
-              chattr -R -i "\$APPS_DIR" 2>/dev/null || true
-              mkdir -p "\$APPS_DIR"
+              chattr -R -i \"\$APPS_DIR\" 2>/dev/null || true
+              mkdir -p \"\$APPS_DIR\"
               mkdir -p ~/RetroPie/roms/apps
+              mkdir -p ~/RetroPie/roms/desktop-games
 
-              cat << 'DESK' > "\$APPS_DIR/terminal.desktop"
+              cat << 'DESK' > \"\$APPS_DIR/terminal.desktop\"
           [Desktop Entry]
           Name=Terminal
           Comment=System Command Line
@@ -150,7 +178,7 @@ jobs:
           Categories=Application;
           DESK
 
-              cat << 'DESK' > "\$APPS_DIR/chromium.desktop"
+              cat << 'DESK' > \"\$APPS_DIR/chromium.desktop\"
           [Desktop Entry]
           Name=Chromium Browser
           Comment=Web Browser
@@ -161,7 +189,7 @@ jobs:
           Categories=Network;
           DESK
 
-              cat << 'DESK' > "\$APPS_DIR/pcmanfm.desktop"
+              cat << 'DESK' > \"\$APPS_DIR/pcmanfm.desktop\"
           [Desktop Entry]
           Name=File Manager (PCManFM)
           Comment=Browse Files
@@ -172,142 +200,119 @@ jobs:
           Categories=System;
           DESK
 
-              cp -f "\$APPS_DIR"/*.desktop "\$BACKUP_APPS_DIR/" 2>/dev/null || true
+              cp -f \"\$APPS_DIR\"/*.desktop \"\$BACKUP_APPS_DIR/\" 2>/dev/null || true
               rm -rf ~/RetroPie/roms/apps/*
-              ln -sf "\$APPS_DIR"/* ~/RetroPie/roms/apps/ 2>/dev/null
-              chattr -R +i "\$APPS_DIR" 2>/dev/null || true
+              ln -sf \"\$APPS_DIR\"/* ~/RetroPie/roms/apps/ 2>/dev/null
+              chattr -R +i \"\$APPS_DIR\" 2>/dev/null || true
           }
 
-          # Kullanıcı Bildirimli ve Kaynak Kod Öncelikli İndirme Motoru
+          # Akıllı Kaynak Kod Öncelikli RetroPie Kurulumu (4.8.zip)
           auto_install_retropie() {
-              dialog --title "RetroPie Setup (\$RETROPIE_ARCH)" --infobox "Configuring RetroPie & EmulationStation...\nChecking download methods..." 6 50
+              dialog --title \"RetroPie Setup (\$RETROPIE_ARCH)\" --infobox \"Configuring RetroPie & EmulationStation...\nChecking download methods...\" 6 50
               
-              mkdir -p "\$CONFIG_DIR"
-              cd "\$CONFIG_DIR"
+              mkdir -p \"\$CONFIG_DIR\"
+              cd \"\$CONFIG_DIR\"
               rm -rf RetroPie-Setup
 
               SUCCESS=0
-
-              # 1. Yöntem: Standart Git Clone
               if git clone --depth=1 https://github.com/RetroPie/RetroPie-Setup.git RetroPie-Setup; then
-                  if [ -d "RetroPie-Setup" ]; then
-                      SUCCESS=1
-                  fi
+                  if [ -d \"RetroPie-Setup\" ]; then SUCCESS=1; fi
               fi
 
-              # Eğer Git kullanıcı adı veya kimlik doğrulaması isterse ekrana uyarı ver ve alternatif yönteme geç
               if [ \$SUCCESS -eq 0 ]; then
-                  dialog --msgbox "Git authentication required (Username/Password prompt detected).\nSwitching automatically to direct source code archive (CURL/WGET)..." 7 60
+                  dialog --msgbox \"Git authentication required. Switching to source code archive (4.8.zip)...\" 6 60
               fi
 
-              # 2. Yöntem: CURL ile doğrudan kaynak kod zip paketi (4.8.zip)
               if [ \$SUCCESS -eq 0 ]; then
-                  echo "Trying CURL source archive..."
                   if curl -L -o retropie.zip https://github.com/RetroPie/RetroPie-Setup/archive/refs/tags/4.8.zip; then
                       unzip -q retropie.zip
-                      # Çıkan klasör adı genellikle RetroPie-Setup-4.8 olur, standart isme taşıyalım
                       mv RetroPie-Setup-4.8 RetroPie-Setup 2>/dev/null || mv RetroPie-Setup-* RetroPie-Setup 2>/dev/null
-                      if [ -d "RetroPie-Setup" ]; then
-                          SUCCESS=1
-                      fi
+                      if [ -d \"RetroPie-Setup\" ]; then SUCCESS=1; fi
                   fi
               fi
 
-              # 3. Yöntem: WGET ile doğrudan kaynak kod zip paketi (4.8.zip)
               if [ \$SUCCESS -eq 0 ]; then
-                  echo "Trying WGET source archive..."
                   if wget -O retropie.zip https://github.com/RetroPie/RetroPie-Setup/archive/refs/tags/4.8.zip; then
                       unzip -q retropie.zip
                       mv RetroPie-Setup-4.8 RetroPie-Setup 2>/dev/null || mv RetroPie-Setup-* RetroPie-Setup 2>/dev/null
-                      if [ -d "RetroPie-Setup" ]; then
-                      SUCCESS=1
-                      fi
+                      if [ -d \"RetroPie-Setup\" ]; then SUCCESS=1; fi
                   fi
               fi
-
-              # Temizlik
               rm -f retropie.zip
 
-              # Sonuç Kontrolü ve Kurulum
-              if [ \$SUCCESS -eq 1 ] && [ -d "\$CONFIG_DIR/RetroPie-Setup" ]; then
-                  cd "\$CONFIG_DIR/RetroPie-Setup"
-                  sudo YES=1 ./retropie_packages.sh core setup_packages < /dev/null || sudo ./retropie_packages.sh core setup_packages < /dev/null
-                  sudo YES=1 ./retropie_packages.sh essentials < /dev/null || sudo ./retropie_packages.sh essentials < /dev/null
-                  sudo YES=1 ./retropie_packages.sh emulationstation install < /dev/null || sudo ./retropie_packages.sh emulationstation install < /dev/null
-                  sudo YES=1 ./retropie_packages.sh retroarch install < /dev/null || sudo ./retropie_packages.sh retroarch install < /dev/null
-                  
+              if [ \$SUCCESS -eq 1 ] && [ -d \"\$CONFIG_DIR/RetroPie-Setup\" ]; then
+                  cd \"\$CONFIG_DIR/RetroPie-Setup\"
+                  sudo YES=1 ./retropie_packages.sh core setup_packages < /dev/null || true
+                  sudo YES=1 ./retropie_packages.sh essentials < /dev/null || true
+                  sudo YES=1 ./retropie_packages.sh emulationstation install < /dev/null || true
+                  sudo YES=1 ./retropie_packages.sh retroarch install < /dev/null || true
                   create_es_shortcuts
-                  dialog --msgbox "RetroPie and EmulationStation installed successfully!" 5 50
+                  dialog --msgbox \"RetroPie and EmulationStation installed successfully!\" 5 50
               else
-                  dialog --msgbox "ERROR: All installation methods failed!" 5 40
+                  dialog --msgbox \"ERROR: All installation methods failed!\" 5 40
               fi
           }
 
-          if [ ! -f "/opt/kgamer/.installed" ]; then
+          if [ ! -f \"/opt/kgamer/.installed\" ]; then
               auto_install_retropie
               create_es_shortcuts
-              touch "/opt/kgamer/.installed"
+              touch \"/opt/kgamer/.installed\"
           fi
 
-          reinstall_menu() {
-              while true; do
-                  CHOICE=\$(dialog --clear --title "KGAMER-RETROGAMER-LINUXOS Secure Reinstall" \
-                      --menu "Select an option:" 17 65 6 \
-                      "1" "Reinstall RetroPie & EmulationStation" \
-                      "2" "Reinstall RetroArch" \
-                      "3" "Repair & Reinstall Plymouth Theme" \
-                      "4" "Reset XFCE Panel (Bottom)" \
-                      "5" "Self-Healing: Restore Shortcuts" \
-                      "6" "Return to Main Menu" 3>&1 1>&2 2>&3)
-                  case \$CHOICE in
-                      1) auto_install_retropie ;;
-                      2) cd "\$CONFIG_DIR/RetroPie-Setup" && sudo ./retropie_packages.sh retroarch re-install < /dev/null ;;
-                      3) chattr -R -i "\$PLYMOUTH_THEME_DIR" 2>/dev/null; cp -r kgamer-boot/* "\$PLYMOUTH_THEME_DIR/" && plymouth-set-default-theme -R kgamer-boot; chattr -R +i "\$PLYMOUTH_THEME_DIR" ;;
-                      4) 
-                          pkill xfce4-panel 2>/dev/null || true
-                          xfconf-query -c xfce4-panel -p /panels/panel-1/position -s "p=6;x=0;y=0" 2>/dev/null || true
-                          xfconf-query -c xfce4-panel -p /panels/panel-1/position-locked -s true 2>/dev/null || true
-                          xfce4-panel &
-                          dialog --msgbox "XFCE bottom panel reset successfully!" 5 40
-                          ;;
-                      5) create_es_shortcuts; dialog --msgbox "Shortcuts successfully repaired and locked!" 5 45 ;;
-                      6) break ;;
-                  esac
-              done
-          }
+          while true; do
+              if [ ! -f \"\$APPS_DIR/terminal.desktop\" ]; then
+                  chattr -R -i \"\$APPS_DIR\" 2>/dev/null || true
+                  cp -f \"\$BACKUP_APPS_DIR\"/*.desktop \"\$APPS_DIR/\" 2>/dev/null || true
+                  chattr -R +i \"\$APPS_DIR\" 2>/dev/null || true
+              fi
 
-          main_menu() {
-              while true; do
-                  if [ ! -f "\$APPS_DIR/terminal.desktop" ]; then
-                      chattr -R -i "\$APPS_DIR" 2>/dev/null || true
-                      cp -f "\$BACKUP_APPS_DIR"/*.desktop "\$APPS_DIR/" 2>/dev/null || true
-                      chattr -R +i "\$APPS_DIR" 2>/dev/null || true
-                  fi
+              CHOICE=\$(dialog --clear --title \"KGAMER-RETROGAMER-LINUXOS CONTROL CENTER\" \
+                  --menu \"Select action:\" 15 65 4 \
+                  \"1\" \"Launch EmulationStation (Terminal, Chromium & PCManFM in Apps)\" \
+                  \"2\" \"Open Desktop (Openbox / XFCE Bottom Panel Active)\" \
+                  \"3\" \"Exit / Shutdown\" 3>&1 1>&2 2>&3)
+              case \$CHOICE in
+                  1) clear; emulationstation ;;
+                  2) clear; openbox-session ;;
+                  3) clear; exit 0 ;;
+              esac
+          done
+          EOF"
 
-                  CHOICE=\$(dialog --clear --title "KGAMER-RETROGAMER-LINUXOS CONTROL CENTER" \
-                      --menu "Select action:" 15 65 4 \
-                      "1" "Launch EmulationStation (Terminal, Chromium & PCManFM in Apps)" \
-                      "2" "Open Desktop (Openbox / XFCE Bottom Panel Active)" \
-                      "3" "RetroPie Setup & Secure Reinstall Menu" \
-                      "4" "Exit / Shutdown" 3>&1 1>&2 2>&3)
-                  case \$CHOICE in
-                      1) clear; emulationstation ;;
-                      2) clear; openbox-session ;;
-                      3) reinstall_menu ;;
-                      4) clear; exit 0 ;;
-                  esac
-              done
-          }
+          sudo chmod +x mnt/opt/kgamer/kgamer-setup.sh
 
-          create_es_shortcuts
-          while true; do main_menu; do done
-          EOF
-          chmod +x kgamer-setup.sh
+          # Systemd First-Boot Service Tanımlaması (İmaj ilk açıldığında otomatik çalışması için)
+          sudo bash -c "cat << 'EOF' > mnt/etc/systemd/system/kgamer-setup.service
+          [Unit]
+          Description=KGAMER-RETROGAMER-LINUXOS First Boot Auto Setup
+          After=network-online.target
 
-      - name: Upload KGAMER-RETROGAMER-LINUXOS Artifact
+          [Service]
+          Type=simple
+          ExecStart=/bin/bash /opt/kgamer/kgamer-setup.sh
+          StandardInput=tty
+          StandardOutput=tty
+          TTYPath=/dev/tty1
+
+          [Install]
+          WantedBy=multi-user.target
+          EOF"
+
+          # Servisi etkinleştir
+          sudo chroot mnt systemctl enable kgamer-setup.service
+
+          # 5. Temizlik ve Unmount İşlemleri
+          sudo sync
+          sudo umount mnt
+          sudo partx -d "$LOOP_DEV"
+          sudo losetup -d "$LOOP_DEV"
+
+          # İmajı Sıkıştır (Artifact olarak indirilmek üzere)
+          mv "$IMG_FILE" KGAMER-RETROGAMER-LINUXOS.img
+          zip KGAMER-RETROGAMER-LINUXOS.img.zip KGAMER-RETROGAMER-LINUXOS.img
+
+      - name: Upload Final Bootable .IMG Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: kgamer-retrogamer-linuxos-payload
-          path: |
-            kgamer-boot/
-            kgamer-setup.sh
+          name: KGAMER-RETROGAMER-LINUXOS-IMG
+          path: KGAMER-RETROGAMER-LINUXOS.img.zip
