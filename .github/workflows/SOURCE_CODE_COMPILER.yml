@@ -16,7 +16,6 @@ jobs:
         run: |
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/share/boost 2>/dev/null || true
           echo "Disk cleanup completed successfully."
-          df -h
 
       - name: Install Image Building Dependencies
         run: |
@@ -63,6 +62,7 @@ jobs:
 
           sudo cp /usr/bin/qemu-aarch64-static mnt/usr/bin/
 
+          # Orijinal Raspberry Pi Sihirbazlarını ve Servisleri KÖKTEN SİL
           sudo chroot mnt systemctl disable raspi-config 2>/dev/null || true
           sudo chroot mnt systemctl disable firstboot 2>/dev/null || true
           sudo chroot mnt systemctl disable resize2fs_once 2>/dev/null || true
@@ -74,9 +74,16 @@ jobs:
           sudo chroot mnt bash -c "echo 'kgamer:kgamer' | chpasswd"
           sudo chroot mnt bash -c "mkdir -p /home/kgamer && chown -R kgamer:kgamer /home/kgamer"
 
+          # Plymouth Tamamen Kaldırıldı, Saf ve Hızlı Paketler Tutuldu
           sudo chroot mnt apt-get update -y || true
-          sudo chroot mnt apt-get install -y dialog git wget curl unzip xfce4-panel openbox console-setup plymouth plymouth-themes pcmanfm chromium || true
+          sudo chroot mnt apt-get install -y dialog git wget curl unzip xfce4-panel openbox console-setup pcmanfm chromium || true
           sudo chroot mnt apt-get clean
+
+          # Kernel Komut Satırından (cmdline.txt) Logo ve Açılış Yazılarını Temizle (Quiet & NoSplash)
+          sudo sed -i 's/console=serial0,115200 //' mnt/boot/firmware/cmdline.txt || true
+          if ! grep -q "quiet" mnt/boot/firmware/cmdline.txt; then
+              sudo sed -i 's/rootwait/rootwait quiet splash logo.nologo vt.global_cursor_default=0/' mnt/boot/firmware/cmdline.txt || true
+          fi
 
           sudo chroot mnt bash -c "
           export DEBIAN_FRONTEND=noninteractive
@@ -140,63 +147,6 @@ jobs:
           ln -sf /opt/kgamer/apps/pcmanfm.desktop /home/kgamer/RetroPie/roms/apps/
           chown -R kgamer:kgamer /home/kgamer/RetroPie 2>/dev/null || true
           "
-
-          THEME_DIR="mnt/usr/share/plymouth/themes/kgamer-boot"
-          sudo mkdir -p "$THEME_DIR"
-          
-          if ls frame_0001.png 1> /dev/null 2>&1; then
-              sudo cp frame_*.png "$THEME_DIR/"
-              echo "Blender frames successfully embedded into image."
-          else
-              echo "ERROR: frame_0001.png not found directly in repository root!"
-              exit 1
-          fi
-
-          sudo bash -c "cat << 'EOF' > $THEME_DIR/kgamer-boot.plymouth
-          [Plymouth Theme]
-          Name=KGAMER-RETROGAMER-LINUXOS 30FPS Boot
-          Description=KGAMER-RETROGAMER-LINUXOS Blender 30 FPS Slideshow Theme
-          ModuleName=slideshow
-
-          [slideshow]
-          ImageDir=/usr/share/plymouth/themes/kgamer-boot
-          Duration=0.033
-          ScriptFile=/usr/share/plymouth/themes/kgamer-boot/kgamer-boot.script
-          EOF"
-
-          sudo bash -c "cat << 'EOF' > $THEME_DIR/kgamer-boot.script
-          screen_width = Window.GetWidth();
-          screen_height = Window.GetHeight();
-
-          counter = 1;
-          max_frames = 150;
-
-          fun load_frame(n) {
-              if (n < 10) filename = \"frame_000\" + n + \".png\";
-              else if (n < 100) filename = \"frame_00\" + n + \".png\";
-              else filename = \"frame_0\" + n + \".png\";
-              
-              return Image(filename);
-          }
-
-          current_image = load_frame(counter);
-          sprite = Sprite(current_image);
-          sprite.SetX((screen_width - current_image.GetWidth()) / 2);
-          sprite.SetY((screen_height - current_image.GetHeight()) / 2);
-
-          fun refresh_callback () {
-              counter++;
-              if (counter > max_frames) {
-                  counter = 1;
-              }
-              current_image = load_frame(counter);
-              sprite.SetImage(current_image);
-          }
-          
-          Plymouth.SetRefreshFunction(refresh_callback);
-          EOF"
-
-          sudo chroot mnt plymouth-set-default-theme -R kgamer-boot || true
 
           sudo mkdir -p mnt/opt/kgamer
           sudo bash -c "cat << 'EOF' > mnt/opt/kgamer/kgamer-setup.sh
