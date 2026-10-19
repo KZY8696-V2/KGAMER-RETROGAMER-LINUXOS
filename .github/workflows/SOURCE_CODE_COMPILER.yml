@@ -53,6 +53,12 @@ jobs:
           sudo mkdir -p mnt/boot/firmware
           sudo mount "$BOOT_PART" mnt/boot/firmware
 
+          # Kritik: Chroot ortamı için Virtual Filesystem Mounts (posix_openpt çözümü)
+          sudo mount -t proc proc mnt/proc
+          sudo mount -t sysfs sysfs mnt/sys
+          sudo mount --bind /dev mnt/dev
+          sudo mount --bind /dev/pts mnt/dev/pts
+
           sudo bash -c "echo '/dev/root / ext4 defaults,noatime 0 1' > mnt/etc/fstab"
 
           sudo cp /usr/bin/qemu-aarch64-static mnt/usr/bin/
@@ -294,8 +300,15 @@ jobs:
 
           sudo rm -f mnt/usr/bin/qemu-aarch64-static
           sudo sync
+
+          # Güvenli Unmount Adımları (Virtual Filesystem ve Bölümler)
+          sudo umount mnt/dev/pts || true
+          sudo umount mnt/dev || true
+          sudo umount mnt/sys || true
+          sudo umount mnt/proc || true
           sudo umount mnt/boot/firmware || true
           sudo umount mnt || true
+
           sudo partx -d "$LOOP_DEV"
           sudo losetup -d "$LOOP_DEV"
 
