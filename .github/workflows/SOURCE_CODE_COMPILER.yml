@@ -12,11 +12,6 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Maximize GitHub Runner Disk Space
-        run: |
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/share/boost 2>/dev/null || true
-          echo "Disk cleanup completed successfully."
-
       - name: Install Image Building Dependencies
         run: |
           sudo apt-get update
@@ -62,7 +57,6 @@ jobs:
 
           sudo cp /usr/bin/qemu-aarch64-static mnt/usr/bin/
 
-          # Orijinal Raspberry Pi Sihirbazlarını ve Servisleri KÖKTEN SİL
           sudo chroot mnt systemctl disable raspi-config 2>/dev/null || true
           sudo chroot mnt systemctl disable firstboot 2>/dev/null || true
           sudo chroot mnt systemctl disable resize2fs_once 2>/dev/null || true
@@ -74,12 +68,10 @@ jobs:
           sudo chroot mnt bash -c "echo 'kgamer:kgamer' | chpasswd"
           sudo chroot mnt bash -c "mkdir -p /home/kgamer && chown -R kgamer:kgamer /home/kgamer"
 
-          # Plymouth Tamamen Kaldırıldı, Saf ve Hızlı Paketler Tutuldu
           sudo chroot mnt apt-get update -y || true
           sudo chroot mnt apt-get install -y dialog git wget curl unzip xfce4-panel openbox console-setup pcmanfm chromium || true
           sudo chroot mnt apt-get clean
 
-          # Kernel Komut Satırından (cmdline.txt) Logo ve Açılış Yazılarını Temizle (Quiet & NoSplash)
           sudo sed -i 's/console=serial0,115200 //' mnt/boot/firmware/cmdline.txt || true
           if ! grep -q "quiet" mnt/boot/firmware/cmdline.txt; then
               sudo sed -i 's/rootwait/rootwait quiet splash logo.nologo vt.global_cursor_default=0/' mnt/boot/firmware/cmdline.txt || true
