@@ -58,7 +58,10 @@ jobs:
           sudo chroot mnt bash -c "echo 'kgamer:kgamer' | chpasswd"
           sudo chroot mnt bash -c "mkdir -p /home/kgamer && chown -R kgamer:kgamer /home/kgamer"
 
-          # 5. Plymouth 30 FPS Blender Animasyonunu (frame_0001 - frame_0150) Doğrudan Kök Dizinden Göm
+          # 5. Plymouth Paketini Önceden Yükle ve 30 FPS Blender Animasyonunu Göm
+          sudo chroot mnt apt-get update -y || true
+          sudo chroot mnt apt-get install -y plymouth plymouth-themes || true
+
           THEME_DIR="mnt/usr/share/plymouth/themes/kgamer-boot"
           sudo mkdir -p "$THEME_DIR"
           
