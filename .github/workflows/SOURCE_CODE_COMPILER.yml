@@ -49,7 +49,13 @@ jobs:
           sudo mkdir -p mnt/boot/firmware
           sudo mount "$BOOT_PART" mnt/boot/firmware
 
-          # 3. Orijinal Raspberry Pi Sihirbazlarını, Firstboot ve Disk Partition Servislerini KÖKTEN SİL
+          # 3. Initramfs fsck Uyarısını Önlemek İçin Geçici fstab Tanımla
+          sudo bash -c "echo '/dev/root / ext4 defaults,noatime 0 1' > mnt/etc/fstab"
+
+          # 4. ARM64 Chroot için QEMU Statik Emülatörünü Kopyala
+          sudo cp /usr/bin/qemu-aarch64-static mnt/usr/bin/
+
+          # 5. Orijinal Raspberry Pi Sihirbazlarını, Firstboot ve Disk Partition Servislerini KÖKTEN SİL
           sudo chroot mnt systemctl disable raspi-config 2>/dev/null || true
           sudo chroot mnt systemctl disable firstboot 2>/dev/null || true
           sudo chroot mnt systemctl disable resize2fs_once 2>/dev/null || true
@@ -57,27 +63,87 @@ jobs:
           sudo rm -f mnt/etc/profile.d/raspi-config.sh 2>/dev/null || true
           sudo rm -f mnt/boot/firstrun.sh 2>/dev/null || true
 
-          # 4. Sabit 'kgamer' Kullanıcısını Manuel Oluştur ve Yetkilendir
+          # 6. Sabit 'kgamer' Kullanıcısını Manuel Oluştur ve Yetkilendir
           sudo chroot mnt bash -c "id -u kgamer &>/dev/null || useradd -m -s /bin/bash -G sudo,audio,video,input,games kgamer"
           sudo chroot mnt bash -c "echo 'kgamer:kgamer' | chpasswd"
           sudo chroot mnt bash -c "mkdir -p /home/kgamer && chown -R kgamer:kgamer /home/kgamer"
 
-          # 5. Plymouth Paketini Kur ve 30 FPS Blender Animasyonunu Göm
+          # 7. Temel Paketleri, Plymouth ve RetroPie'ı DOĞRUDAN İMAJ İÇİNE KUR
           sudo chroot mnt apt-get update -y || true
-          sudo chroot mnt apt-get install -y plymouth plymouth-themes || true
+          sudo chroot mnt apt-get install -y dialog git wget curl unzip xfce4-panel openbox console-setup plymouth plymouth-themes chromium pcmanfm || true
 
+          sudo chroot mnt bash -c "
+            export DEBIAN_FRONTEND=noninteractive
+            mkdir -p /opt/kgamer
+            cd /opt/kgamer
+            git clone --depth=1 https://github.com/RetroPie/RetroPie-Setup.git RetroPie-Setup || true
+            cd RetroPie-Setup
+            export YES=1
+            ./retropie_packages.sh core setup_packages < /dev/null || true
+            ./retropie_packages.sh essentials < /dev/null || true
+            ./retropie_packages.sh emulationstation install < /dev/null || true
+            ./retropie_packages.sh retroarch install < /dev/null || true
+          " || true
+
+          # 8. Otomatik Apps ve RPIGAMES Klasör Kısayollarını Oluştur
+          sudo chroot mnt bash -c "
+            mkdir -p /opt/kgamer/apps
+            mkdir -p /opt/kgamer/backup_apps
+            mkdir -p /home/kgamer/RetroPie/roms/apps
+            mkdir -p /home/kgamer/RetroPie/roms/RPIGAMES
+            mkdir -p /home/kgamer/RetroPie/roms/desktop-games
+
+            cat << 'DESK' > /opt/kgamer/apps/terminal.desktop
+            [Desktop Entry]
+            Name=Terminal
+            Comment=System Command Line
+            Exec=bash
+            Icon=utilities-terminal
+            Terminal=true
+            Type=Application
+            Categories=Application;
+            DESK
+
+            cat << 'DESK' > /opt/kgamer/apps/chromium.desktop
+            [Desktop Entry]
+            Name=Chromium Browser
+            Comment=Web Browser
+            Exec=chromium --no-sandbox
+            Icon=web-browser
+            Terminal=false
+            Type=Application
+            Categories=Network;
+            DESK
+
+            cat << 'DESK' > /opt/kgamer/apps/pcmanfm.desktop
+            [Desktop Entry]
+            Name=File Manager (PCManFM)
+            Comment=Browse Files
+            Exec=pcmanfm
+            Icon=system-file-manager
+            Terminal=false
+            Type=Application
+            Categories=System;
+            DESK
+
+            cp -f /opt/kgamer/apps/*.desktop /opt/kgamer/backup_apps/ 2>/dev/null || true
+            rm -rf /home/kgamer/RetroPie/roms/apps/*
+            ln -sf /opt/kgamer/apps/* /home/kgamer/RetroPie/roms/apps/ 2>/dev/null
+            chown -R kgamer:kgamer /home/kgamer/RetroPie 2>/dev/null || true
+          "
+
+          # 9. Plymouth 30 FPS Blender Animasyonunu Göm
           THEME_DIR="mnt/usr/share/plymouth/themes/kgamer-boot"
           sudo mkdir -p "$THEME_DIR"
           
           if ls frame_0001.png 1> /dev/null 2>&1; then
               sudo cp frame_*.png "$THEME_DIR/"
-              echo "Blender frames (frame_0001 to frame_0150) successfully embedded into image."
+              echo "Blender frames successfully embedded into image."
           else
               echo "ERROR: frame_0001.png not found directly in repository root!"
               exit 1
           fi
 
-          # Plymouth .plymouth Config (30 FPS Eşit Hız / Slideshow)
           sudo bash -c "cat << 'EOF' > $THEME_DIR/kgamer-boot.plymouth
           [Plymouth Theme]
           Name=KGAMER-RETROGAMER-LINUXOS 30FPS Boot
@@ -90,7 +156,6 @@ jobs:
           ScriptFile=/usr/share/plymouth/themes/kgamer-boot/kgamer-boot.script
           EOF"
 
-          # Plymouth 30 FPS Script
           sudo bash -c "cat << 'EOF' > $THEME_DIR/kgamer-boot.script
           screen_width = Window.GetWidth();
           screen_height = Window.GetHeight();
@@ -125,7 +190,7 @@ jobs:
 
           sudo chroot mnt plymouth-set-default-theme -R kgamer-boot || true
 
-          # 6. Gelişmiş Klavye, RPIGAMES, Apps ve XFCE/Openbox GUI Destekli kgamer-setup.sh Betiği
+          # 10. Kontrol Merkezi kgamer-setup.sh Betiğini Oluştur
           sudo mkdir -p mnt/opt/kgamer
           sudo bash -c "cat << 'EOF' > mnt/opt/kgamer/kgamer-setup.sh
           #!/bin/bash
@@ -133,14 +198,9 @@ jobs:
             exit 1
           fi
 
-          CONFIG_DIR=\"/opt/kgamer\"
-          APPS_DIR=\"\$CONFIG_DIR/apps\"
+          APPS_DIR=\"/opt/kgamer/apps\"
           BACKUP_APPS_DIR=\"/opt/kgamer/backup_apps\"
-          
-          mkdir -p \"\$APPS_DIR\"
-          mkdir -p \"\$BACKUP_APPS_DIR\"
 
-          # Klavye Seçim Menüsü
           configure_keyboard_layout() {
               KB_CHOICE=\$(dialog --clear --title \"KGAMER - KEYBOARD LAYOUT SELECTOR\" \
                   --menu \"Select your keyboard layout / country:\" 20 60 10 \
@@ -167,7 +227,6 @@ jobs:
               fi
           }
 
-          # Yeni Kullanıcı Oluşturma
           create_new_user_account() {
               NEW_USER=\$(dialog --inputbox \"Enter new username:\" 8 40 3>&1 1>&2 2>&3)
               if [ -n \"\$NEW_USER\" ]; then
@@ -180,7 +239,6 @@ jobs:
               fi
           }
 
-          # Mevcut Kullanıcı Düzenleme
           edit_existing_user() {
               TARGET_USER=\$(dialog --inputbox \"Enter existing username to edit (e.g., kgamer):\" 8 50 \"kgamer\" 3>&1 1>&2 2>&3)
               if id \"\$TARGET_USER\" &>/dev/null; then
@@ -207,7 +265,6 @@ jobs:
               fi
           }
 
-          # Root Şifresini Değiştirme
           change_root_password() {
               ROOT_P=\$(dialog --passwordbox \"Enter new ROOT password:\" 8 50 3>&1 1>&2 2>&3)
               if [ -n \"\$ROOT_P\" ]; then
@@ -216,116 +273,17 @@ jobs:
               fi
           }
 
-          # İlk açılışta klavye seçimi
           if [ ! -f \"/opt/kgamer/.keyboard_configured\" ]; then
               configure_keyboard_layout
               touch \"/opt/kgamer/.keyboard_configured\"
           fi
 
-          # Temel Paket Kurulumları
-          {
-              echo \"10\"
-              echo \"==> Updating package lists...\"
-              apt-get update -y > /dev/null 2>&1
-
-              echo \"40\"
-              echo \"==> Installing Dialog, Openbox, and XFCE Panel...\"
-              apt-get install -y dialog git wget curl unzip xfce4-panel openbox console-setup > /dev/null 2>&1
-
-              echo \"75\"
-              echo \"==> Installing Chromium Browser & PCManFM File Manager...\"
-              apt-get install -y chromium pcmanfm > /dev/null 2>&1
-
-              echo \"100\"
-              echo \"==> KGAMER-RETROGAMER-LINUXOS base setup completed!\"
-          } | dialog --title \"KGAMER-RETROGAMER-LINUXOS Setup\" --gauge \"Configuring system components...\" 8 65 0
-
-          # Otomatik Apps ve RPIGAMES Klasörleri (Ana Menü ve Apps için)
-          create_es_shortcuts() {
-              chattr -R -i \"\$APPS_DIR\" 2>/dev/null || true
-              mkdir -p \"\$APPS_DIR\"
-              mkdir -p /home/kgamer/RetroPie/roms/apps
-              mkdir -p /home/kgamer/RetroPie/roms/RPIGAMES
-              mkdir -p /home/kgamer/RetroPie/roms/desktop-games
-
-              cat << 'DESK' > \"\$APPS_DIR/terminal.desktop\"
-          [Desktop Entry]
-          Name=Terminal
-          Comment=System Command Line
-          Exec=bash
-          Icon=utilities-terminal
-          Terminal=true
-          Type=Application
-          Categories=Application;
-          DESK
-
-              cat << 'DESK' > \"\$APPS_DIR/chromium.desktop\"
-          [Desktop Entry]
-          Name=Chromium Browser
-          Comment=Web Browser
-          Exec=chromium --no-sandbox
-          Icon=web-browser
-          Terminal=false
-          Type=Application
-          Categories=Network;
-          DESK
-
-              cat << 'DESK' > \"\$APPS_DIR/pcmanfm.desktop\"
-          [Desktop Entry]
-          Name=File Manager (PCManFM)
-          Comment=Browse Files
-          Exec=pcmanfm
-          Icon=system-file-manager
-          Terminal=false
-          Type=Application
-          Categories=System;
-          DESK
-
-              cp -f \"\$APPS_DIR\"/*.desktop \"\$BACKUP_APPS_DIR/\" 2>/dev/null || true
-              rm -rf /home/kgamer/RetroPie/roms/apps/*
-              ln -sf \"\$APPS_DIR\"/* /home/kgamer/RetroPie/roms/apps/ 2>/dev/null
-              chown -R kgamer:kgamer /home/kgamer/RetroPie 2>/dev/null || true
-              chattr -R +i \"\$APPS_DIR\" 2>/dev/null || true
-          }
-
-          auto_install_retropie() {
-              dialog --title \"RetroPie Setup\" --infobox \"Configuring RetroPie & EmulationStation...\nSetting up apps & RPIGAMES folders...\" 6 55
-              
-              mkdir -p \"\$CONFIG_DIR\"
-              cd \"\$CONFIG_DIR\"
-              rm -rf RetroPie-Setup
-
-              SUCCESS=0
-              if git clone --depth=1 https://github.com/RetroPie/RetroPie-Setup.git RetroPie-Setup; then
-                  if [ -d \"RetroPie-Setup\" ]; then SUCCESS=1; fi
-              fi
-
-              if [ \$SUCCESS -eq 0 ]; then
-                  if curl -L -o retropie.zip https://github.com/RetroPie/RetroPie-Setup/archive/refs/tags/4.8.zip; then
-                      unzip -q retropie.zip
-                      mv RetroPie-Setup-4.8 RetroPie-Setup 2>/dev/null || mv RetroPie-Setup-* RetroPie-Setup 2>/dev/null
-                      if [ -d \"RetroPie-Setup\" ]; then SUCCESS=1; fi
-                  fi
-              fi
-              rm -f retropie.zip
-
-              if [ \$SUCCESS -eq 1 ] && [ -d \"\$CONFIG_DIR/RetroPie-Setup\" ]; then
-                  cd \"\$CONFIG_DIR/RetroPie-Setup\"
-                  sudo YES=1 ./retropie_packages.sh core setup_packages < /dev/null || true
-                  sudo YES=1 ./retropie_packages.sh essentials < /dev/null || true
-                  sudo YES=1 ./retropie_packages.sh emulationstation install < /dev/null || true
-                  sudo YES=1 ./retropie_packages.sh retroarch install < /dev/null || true
-                  create_es_shortcuts
-              fi
-          }
-
-          if [ ! -f \"/opt/kgamer/.installed\" ]; then
-              auto_install_retropie
-              create_es_shortcuts
-              touch \"/opt/kgamer/.installed\"
-          fi
-
           while true; do
+              if [ ! -f \"\$APPS_DIR/terminal.desktop\" ]; then
+                  mkdir -p \"\$APPS_DIR\"
+                  cp -f \"\$BACKUP_APPS_DIR\"/*.desktop \"\$APPS_DIR/\" 2>/dev/null || true
+              fi
+
               CHOICE=\$(dialog --clear --title \"KGAMER-RETROGAMER-LINUXOS CONTROL CENTER\" \
                   --menu \"Select action:\" 18 65 7 \
                   \"1\" \"RETURN TO EMULATION STATION\" \
@@ -349,7 +307,7 @@ jobs:
 
           sudo chmod +x mnt/opt/kgamer/kgamer-setup.sh
 
-          # Systemd First-Boot Service Tanımlaması
+          # 11. Systemd First-Boot Service Tanımlaması
           sudo bash -c "cat << 'EOF' > mnt/etc/systemd/system/kgamer-setup.service
           [Unit]
           Description=KGAMER-RETROGAMER-LINUXOS First Boot Auto Setup
@@ -368,7 +326,8 @@ jobs:
 
           sudo chroot mnt systemctl enable kgamer-setup.service
 
-          # 7. Temizlik ve Unmount İşlemleri (Önce Boot/Firmware, Sonra Kök Bölüm)
+          # 12. Geçici QEMU Dosyasını Temizle ve Unmount Et
+          sudo rm -f mnt/usr/bin/qemu-aarch64-static
           sudo sync
           sudo umount mnt/boot/firmware || true
           sudo umount mnt || true
