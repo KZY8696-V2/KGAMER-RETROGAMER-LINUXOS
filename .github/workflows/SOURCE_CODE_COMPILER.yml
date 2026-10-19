@@ -12,10 +12,21 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
+      - name: Maximize GitHub Runner Disk Space
+        run: |
+          echo "=== CLEANING RUNNER TO MAXIMIZE DISK SPACE ==="
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /usr/local/share/boost
+          sudo rm -rf /agent/_work/_tool
+          sudo docker image prune --all --force || true
+          df -h
+
       - name: Install Image Building Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y parted kpartx qemu-user-static wget curl unzip zip dosfstools exfat-fuse exfatprogs console-data
+          sudo apt-get install -y parted kpartx qemu-user-static wget curl unzip zip dosfstools exfat-fuse exfatprogs console-data e2fsprogs
 
       - name: Build and Embed into Raspberry Pi Lite Image
         run: |
@@ -36,13 +47,20 @@ jobs:
           IMG_FILE=$(ls *.img | head -n 1)
           echo "Image file: $IMG_FILE"
 
-          # 2. İmajı Loop Cihazına Bağla (Mount - Hem Kök Hem de Boot Bölümleri)
+          # 2. İmaj Dosya Boyutunu +4 GB Genişlet (Tüm Paketlerin ve RetroPie'ın Sığması İçin)
+          truncate -s +4G "$IMG_FILE"
+          
           LOOP_DEV=$(sudo losetup --find --show "$IMG_FILE")
           sudo partx -a "$LOOP_DEV"
           sleep 3
 
           ROOT_PART="${LOOP_DEV}p2"
           BOOT_PART="${LOOP_DEV}p1"
+
+          # Partition Tablosunu Büyüt ve ext4 Dosya Sistemini Genişlet
+          sudo parted -s "$LOOP_DEV" resizepart 2 100%
+          sudo e2fsck -f -p "$ROOT_PART" || true
+          sudo resize2fs "$ROOT_PART"
           
           mkdir -p mnt
           sudo mount "$ROOT_PART" mnt
@@ -55,7 +73,7 @@ jobs:
           # 4. ARM64 Chroot için QEMU Statik Emülatörünü Kopyala
           sudo cp /usr/bin/qemu-aarch64-static mnt/usr/bin/
 
-          # 5. Orijinal Raspberry Pi Sihirbazlarını, Firstboot ve Disk Partition Servislerini KÖKTEN SİL
+          # 5. Orijinal Raspberry Pi Sihirbazlarını ve Servisleri KÖKTEN SİL
           sudo chroot mnt systemctl disable raspi-config 2>/dev/null || true
           sudo chroot mnt systemctl disable firstboot 2>/dev/null || true
           sudo chroot mnt systemctl disable resize2fs_once 2>/dev/null || true
@@ -68,15 +86,19 @@ jobs:
           sudo chroot mnt bash -c "echo 'kgamer:kgamer' | chpasswd"
           sudo chroot mnt bash -c "mkdir -p /home/kgamer && chown -R kgamer:kgamer /home/kgamer"
 
-          # 7. Temel Paketleri, Plymouth ve RetroPie'ı DOĞRUDAN İMAJ İÇİNE KUR
+          # 7. Paket Kurulumları ve Git
           sudo chroot mnt apt-get update -y || true
-          sudo chroot mnt apt-get install -y dialog git wget curl unzip xfce4-panel openbox console-setup plymouth plymouth-themes chromium pcmanfm || true
+          sudo chroot mnt apt-get install -y dialog git wget curl unzip xfce4-panel openbox console-setup plymouth plymouth-themes pcmanfm chromium || true
+          sudo chroot mnt apt-get clean
 
+          # 8. RetroPie'ı Doğrudan İmaj İçine Kur
           sudo chroot mnt bash -c "
             export DEBIAN_FRONTEND=noninteractive
             mkdir -p /opt/kgamer
             cd /opt/kgamer
-            git clone --depth=1 https://github.com/RetroPie/RetroPie-Setup.git RetroPie-Setup || true
+            if [ ! -d \"RetroPie-Setup\" ]; then
+                git clone --depth=1 https://github.com/RetroPie/RetroPie-Setup.git RetroPie-Setup || true
+            fi
             cd RetroPie-Setup
             export YES=1
             ./retropie_packages.sh core setup_packages < /dev/null || true
@@ -85,7 +107,7 @@ jobs:
             ./retropie_packages.sh retroarch install < /dev/null || true
           " || true
 
-          # 8. Otomatik Apps ve RPIGAMES Klasör Kısayollarını Oluştur
+          # 9. Otomatik Apps ve RPIGAMES Klasör Kısayollarını Oluştur
           sudo chroot mnt bash -c "
             mkdir -p /opt/kgamer/apps
             mkdir -p /opt/kgamer/backup_apps
@@ -94,37 +116,37 @@ jobs:
             mkdir -p /home/kgamer/RetroPie/roms/desktop-games
 
             cat << 'DESK' > /opt/kgamer/apps/terminal.desktop
-            [Desktop Entry]
-            Name=Terminal
-            Comment=System Command Line
-            Exec=bash
-            Icon=utilities-terminal
-            Terminal=true
-            Type=Application
-            Categories=Application;
-            DESK
+[Desktop Entry]
+Name=Terminal
+Comment=System Command Line
+Exec=bash
+Icon=utilities-terminal
+Terminal=true
+Type=Application
+Categories=Application;
+DESK
 
             cat << 'DESK' > /opt/kgamer/apps/chromium.desktop
-            [Desktop Entry]
-            Name=Chromium Browser
-            Comment=Web Browser
-            Exec=chromium --no-sandbox
-            Icon=web-browser
-            Terminal=false
-            Type=Application
-            Categories=Network;
-            DESK
+[Desktop Entry]
+Name=Chromium Browser
+Comment=Web Browser
+Exec=chromium --no-sandbox
+Icon=web-browser
+Terminal=false
+Type=Application
+Categories=Network;
+DESK
 
             cat << 'DESK' > /opt/kgamer/apps/pcmanfm.desktop
-            [Desktop Entry]
-            Name=File Manager (PCManFM)
-            Comment=Browse Files
-            Exec=pcmanfm
-            Icon=system-file-manager
-            Terminal=false
-            Type=Application
-            Categories=System;
-            DESK
+[Desktop Entry]
+Name=File Manager (PCManFM)
+Comment=Browse Files
+Exec=pcmanfm
+Icon=system-file-manager
+Terminal=false
+Type=Application
+Categories=System;
+DESK
 
             cp -f /opt/kgamer/apps/*.desktop /opt/kgamer/backup_apps/ 2>/dev/null || true
             rm -rf /home/kgamer/RetroPie/roms/apps/*
@@ -132,7 +154,7 @@ jobs:
             chown -R kgamer:kgamer /home/kgamer/RetroPie 2>/dev/null || true
           "
 
-          # 9. Plymouth 30 FPS Blender Animasyonunu Göm
+          # 10. Plymouth 30 FPS Blender Animasyonunu Göm
           THEME_DIR="mnt/usr/share/plymouth/themes/kgamer-boot"
           sudo mkdir -p "$THEME_DIR"
           
@@ -190,7 +212,7 @@ jobs:
 
           sudo chroot mnt plymouth-set-default-theme -R kgamer-boot || true
 
-          # 10. Kontrol Merkezi kgamer-setup.sh Betiğini Oluştur
+          # 11. Kontrol Merkezi kgamer-setup.sh Betiğini Oluştur
           sudo mkdir -p mnt/opt/kgamer
           sudo bash -c "cat << 'EOF' > mnt/opt/kgamer/kgamer-setup.sh
           #!/bin/bash
@@ -307,7 +329,7 @@ jobs:
 
           sudo chmod +x mnt/opt/kgamer/kgamer-setup.sh
 
-          # 11. Systemd First-Boot Service Tanımlaması
+          # 12. Systemd First-Boot Service Tanımlaması
           sudo bash -c "cat << 'EOF' > mnt/etc/systemd/system/kgamer-setup.service
           [Unit]
           Description=KGAMER-RETROGAMER-LINUXOS First Boot Auto Setup
@@ -326,7 +348,7 @@ jobs:
 
           sudo chroot mnt systemctl enable kgamer-setup.service
 
-          # 12. Geçici QEMU Dosyasını Temizle ve Unmount Et
+          # 13. Geçici QEMU Dosyasını Temizle ve Unmount Et
           sudo rm -f mnt/usr/bin/qemu-aarch64-static
           sudo sync
           sudo umount mnt/boot/firmware || true
