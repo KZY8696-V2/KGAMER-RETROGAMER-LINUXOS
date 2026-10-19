@@ -32,7 +32,6 @@ jobs:
         run: |
           echo "=== KGAMER-RETROGAMER-LINUXOS .IMG BUILD STARTED ==="
 
-          # 1. Resmi Raspberry Pi OS Lite Yerel İmajını İndir
           IMG_URL="https://downloads.raspberrypi.org/raspios_lite_arm64/images/raspios_lite_arm64-2024-03-15/2024-03-15-raspios-bookworm-arm64-lite.img.xz"
           
           echo "Downloading Raspberry Pi OS Lite local image..."
@@ -47,7 +46,6 @@ jobs:
           IMG_FILE=$(ls *.img | head -n 1)
           echo "Image file: $IMG_FILE"
 
-          # 2. İmaj Dosya Boyutunu +4 GB Genişlet (Tüm Paketlerin ve RetroPie'ın Sığması İçin)
           truncate -s +4G "$IMG_FILE"
           
           LOOP_DEV=$(sudo losetup --find --show "$IMG_FILE")
@@ -57,7 +55,6 @@ jobs:
           ROOT_PART="${LOOP_DEV}p2"
           BOOT_PART="${LOOP_DEV}p1"
 
-          # Partition Tablosunu Büyüt ve ext4 Dosya Sistemini Genişlet
           sudo parted -s "$LOOP_DEV" resizepart 2 100%
           sudo e2fsck -f -p "$ROOT_PART" || true
           sudo resize2fs "$ROOT_PART"
@@ -67,13 +64,10 @@ jobs:
           sudo mkdir -p mnt/boot/firmware
           sudo mount "$BOOT_PART" mnt/boot/firmware
 
-          # 3. Initramfs fsck Uyarısını Önlemek İçin Geçici fstab Tanımla
           sudo bash -c "echo '/dev/root / ext4 defaults,noatime 0 1' > mnt/etc/fstab"
 
-          # 4. ARM64 Chroot için QEMU Statik Emülatörünü Kopyala
           sudo cp /usr/bin/qemu-aarch64-static mnt/usr/bin/
 
-          # 5. Orijinal Raspberry Pi Sihirbazlarını ve Servisleri KÖKTEN SİL
           sudo chroot mnt systemctl disable raspi-config 2>/dev/null || true
           sudo chroot mnt systemctl disable firstboot 2>/dev/null || true
           sudo chroot mnt systemctl disable resize2fs_once 2>/dev/null || true
@@ -81,80 +75,77 @@ jobs:
           sudo rm -f mnt/etc/profile.d/raspi-config.sh 2>/dev/null || true
           sudo rm -f mnt/boot/firstrun.sh 2>/dev/null || true
 
-          # 6. Sabit 'kgamer' Kullanıcısını Manuel Oluştur ve Yetkilendir
           sudo chroot mnt bash -c "id -u kgamer &>/dev/null || useradd -m -s /bin/bash -G sudo,audio,video,input,games kgamer"
           sudo chroot mnt bash -c "echo 'kgamer:kgamer' | chpasswd"
           sudo chroot mnt bash -c "mkdir -p /home/kgamer && chown -R kgamer:kgamer /home/kgamer"
 
-          # 7. Paket Kurulumları ve Git
           sudo chroot mnt apt-get update -y || true
           sudo chroot mnt apt-get install -y dialog git wget curl unzip xfce4-panel openbox console-setup plymouth plymouth-themes pcmanfm chromium || true
           sudo chroot mnt apt-get clean
 
-          # 8. RetroPie'ı Doğrudan İmaj İçine Kur
           sudo chroot mnt bash -c "
-            export DEBIAN_FRONTEND=noninteractive
-            mkdir -p /opt/kgamer
-            cd /opt/kgamer
-            if [ ! -d \"RetroPie-Setup\" ]; then
-                git clone --depth=1 https://github.com/RetroPie/RetroPie-Setup.git RetroPie-Setup || true
-            fi
-            cd RetroPie-Setup
-            export YES=1
-            ./retropie_packages.sh core setup_packages < /dev/null || true
-            ./retropie_packages.sh essentials < /dev/null || true
-            ./retropie_packages.sh emulationstation install < /dev/null || true
-            ./retropie_packages.sh retroarch install < /dev/null || true
+          export DEBIAN_FRONTEND=noninteractive
+          mkdir -p /opt/kgamer
+          cd /opt/kgamer
+          if [ ! -d \"RetroPie-Setup\" ]; then
+          git clone --depth=1 https://github.com/RetroPie/RetroPie-Setup.git RetroPie-Setup || true
+          fi
+          cd RetroPie-Setup
+          export YES=1
+          ./retropie_packages.sh core setup_packages < /dev/null || true
+          ./retropie_packages.sh essentials < /dev/null || true
+          ./retropie_packages.sh emulationstation install < /dev/null || true
+          ./retropie_packages.sh retroarch install < /dev/null || true
           " || true
 
-          # 9. Otomatik Apps ve RPIGAMES Klasör Kısayollarını Oluştur
           sudo chroot mnt bash -c "
-            mkdir -p /opt/kgamer/apps
-            mkdir -p /opt/kgamer/backup_apps
-            mkdir -p /home/kgamer/RetroPie/roms/apps
-            mkdir -p /home/kgamer/RetroPie/roms/RPIGAMES
-            mkdir -p /home/kgamer/RetroPie/roms/desktop-games
+          mkdir -p /opt/kgamer/apps
+          mkdir -p /opt/kgamer/backup_apps
+          mkdir -p /home/kgamer/RetroPie/roms/apps
+          mkdir -p /home/kgamer/RetroPie/roms/RPIGAMES
+          mkdir -p /home/kgamer/RetroPie/roms/desktop-games
 
-            cat << 'DESK' > /opt/kgamer/apps/terminal.desktop
-[Desktop Entry]
-Name=Terminal
-Comment=System Command Line
-Exec=bash
-Icon=utilities-terminal
-Terminal=true
-Type=Application
-Categories=Application;
-DESK
+          cat << 'EOF' > /opt/kgamer/apps/terminal.desktop
+          [Desktop Entry]
+          Name=Terminal
+          Comment=System Command Line
+          Exec=bash
+          Icon=utilities-terminal
+          Terminal=true
+          Type=Application
+          Categories=Application;
+          EOF
 
-            cat << 'DESK' > /opt/kgamer/apps/chromium.desktop
-[Desktop Entry]
-Name=Chromium Browser
-Comment=Web Browser
-Exec=chromium --no-sandbox
-Icon=web-browser
-Terminal=false
-Type=Application
-Categories=Network;
-DESK
+          cat << 'EOF' > /opt/kgamer/apps/chromium.desktop
+          [Desktop Entry]
+          Name=Chromium Browser
+          Comment=Web Browser
+          Exec=chromium --no-sandbox
+          Icon=web-browser
+          Terminal=false
+          Type=Application
+          Categories=Network;
+          EOF
 
-            cat << 'DESK' > /opt/kgamer/apps/pcmanfm.desktop
-[Desktop Entry]
-Name=File Manager (PCManFM)
-Comment=Browse Files
-Exec=pcmanfm
-Icon=system-file-manager
-Terminal=false
-Type=Application
-Categories=System;
-DESK
+          cat << 'EOF' > /opt/kgamer/apps/pcmanfm.desktop
+          [Desktop Entry]
+          Name=File Manager (PCManFM)
+          Comment=Browse Files
+          Exec=pcmanfm
+          Icon=system-file-manager
+          Terminal=false
+          Type=Application
+          Categories=System;
+          EOF
 
-            cp -f /opt/kgamer/apps/*.desktop /opt/kgamer/backup_apps/ 2>/dev/null || true
-            rm -rf /home/kgamer/RetroPie/roms/apps/*
-            ln -sf /opt/kgamer/apps/* /home/kgamer/RetroPie/roms/apps/ 2>/dev/null
-            chown -R kgamer:kgamer /home/kgamer/RetroPie 2>/dev/null || true
+          cp -f /opt/kgamer/apps/*.desktop /opt/kgamer/backup_apps/ 2>/dev/null || true
+          rm -rf /home/kgamer/RetroPie/roms/apps/*
+          ln -sf /opt/kgamer/apps/terminal.desktop /home/kgamer/RetroPie/roms/apps/
+          ln -sf /opt/kgamer/apps/chromium.desktop /home/kgamer/RetroPie/roms/apps/
+          ln -sf /opt/kgamer/apps/pcmanfm.desktop /home/kgamer/RetroPie/roms/apps/
+          chown -R kgamer:kgamer /home/kgamer/RetroPie 2>/dev/null || true
           "
 
-          # 10. Plymouth 30 FPS Blender Animasyonunu Göm
           THEME_DIR="mnt/usr/share/plymouth/themes/kgamer-boot"
           sudo mkdir -p "$THEME_DIR"
           
@@ -212,7 +203,6 @@ DESK
 
           sudo chroot mnt plymouth-set-default-theme -R kgamer-boot || true
 
-          # 11. Kontrol Merkezi kgamer-setup.sh Betiğini Oluştur
           sudo mkdir -p mnt/opt/kgamer
           sudo bash -c "cat << 'EOF' > mnt/opt/kgamer/kgamer-setup.sh
           #!/bin/bash
@@ -225,27 +215,45 @@ DESK
 
           configure_keyboard_layout() {
               KB_CHOICE=\$(dialog --clear --title \"KGAMER - KEYBOARD LAYOUT SELECTOR\" \
-                  --menu \"Select your keyboard layout / country:\" 20 60 10 \
+                  --menu \"Select your keyboard layout / country:\" 20 60 11 \
                   \"us\" \"English (US) - Standard QWERTY\" \
                   \"uk\" \"English (UK)\" \
-                  \"tr\" \"Turkish (Q / F)\" \
-                  \"de\" \"German (DE)\" \
-                  \"fr\" \"French (FR)\" \
+                  \"tr\" \"Turkish (Q / F Choice)\" \
+                  \"de\" \"German (DE - QWERTZ)\" \
+                  \"fr\" \"French (FR - AZERTY)\" \
                   \"es\" \"Spanish (ES)\" \
                   \"it\" \"Italian (IT)\" \
                   \"br\" \"Portuguese (Brazil)\" \
                   \"jp\" \"Japanese (JP)\" \
-                  \"other\" \"Other Layout (Manual Selection)\" 3>&1 1>&2 2>&3)
+                  \"other\" \"Other Layout (Manual Code)\" 3>&1 1>&2 2>&3)
 
-              if [ \"\$KB_CHOICE\" = \"other\" ]; then
+              if [ \"\$KB_CHOICE\" = \"tr\" ]; then
+                  TR_VARIANT=\$(dialog --clear --title \"TURKISH KEYBOARD VARIANT\" \
+                      --menu \"Select Turkish keyboard type:\" 10 50 2 \
+                      \"q\" \"Turkish Q Klavye\" \
+                      \"f\" \"Turkish F Klavye\" 3>&1 1>&2 2>&3)
+                  if [ \"\$TR_VARIANT\" = \"f\" ]; then
+                      KB_CHOICE=\"tr\"
+                      VARIANT_ARG=\"f\"
+                  else
+                      KB_CHOICE=\"tr\"
+                      VARIANT_ARG=\"q\"
+                  fi
+              elif [ \"\$KB_CHOICE\" = \"other\" ]; then
                   CUSTOM_KB=\$(dialog --inputbox \"Enter keyboard layout code (e.g., us, tr, dk, fi):\" 8 50 \"us\" 3>&1 1>&2 2>&3)
                   [ -n \"\$CUSTOM_KB\" ] && KB_CHOICE=\"\$CUSTOM_KB\"
               fi
 
               if [ -n \"\$KB_CHOICE\" ]; then
-                  localectl set-x11-keymap \"\$KB_CHOICE\" 2>/dev/null || true
-                  loadkeys \"\$KB_CHOICE\" 2>/dev/null || true
-                  dialog --msgbox \"Keyboard layout successfully updated to '\$KB_CHOICE'!\" 5 50
+                  if [ \"\$KB_CHOICE\" = \"tr\" ] && [ \"\$VARIANT_ARG\" = \"f\" ]; then
+                      localectl set-x11-keymap tr pc105 f 2>/dev/null || true
+                      loadkeys trf 2>/dev/null || true
+                      dialog --msgbox \"Keyboard layout successfully updated to Turkish F!\" 5 50
+                  else
+                      localectl set-x11-keymap \"\$KB_CHOICE\" 2>/dev/null || true
+                      loadkeys \"\$KB_CHOICE\" 2>/dev/null || true
+                      dialog --msgbox \"Keyboard layout successfully updated to '\$KB_CHOICE'!\" 5 50
+                  fi
               fi
           }
 
@@ -329,7 +337,6 @@ DESK
 
           sudo chmod +x mnt/opt/kgamer/kgamer-setup.sh
 
-          # 12. Systemd First-Boot Service Tanımlaması
           sudo bash -c "cat << 'EOF' > mnt/etc/systemd/system/kgamer-setup.service
           [Unit]
           Description=KGAMER-RETROGAMER-LINUXOS First Boot Auto Setup
@@ -348,7 +355,6 @@ DESK
 
           sudo chroot mnt systemctl enable kgamer-setup.service
 
-          # 13. Geçici QEMU Dosyasını Temizle ve Unmount Et
           sudo rm -f mnt/usr/bin/qemu-aarch64-static
           sudo sync
           sudo umount mnt/boot/firmware || true
