@@ -15,16 +15,16 @@ jobs:
       - name: Install Image Building Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y parted kpartx qemu-user-static wget curl unzip zip dosfstools exfat-fuse exfatprogs
+          sudo apt-get install -y parted kpartx qemu-user-static wget curl unzip zip dosfstools exfat-fuse exfatprogs console-data
 
       - name: Build and Embed into Raspberry Pi Lite Image
         run: |
           echo "=== KGAMER-RETROGAMER-LINUXOS .IMG BUILD STARTED ==="
 
-          # 1. Resmi Raspberry Pi OS Lite İmajını İndir
+          # 1. Resmi Raspberry Pi OS Lite Yerel İmajını İndir
           IMG_URL="https://downloads.raspberrypi.org/raspios_lite_arm64/images/raspios_lite_arm64-2024-03-15/2024-03-15-raspios-bookworm-arm64-lite.img.xz"
           
-          echo "Downloading Raspberry Pi OS Lite image..."
+          echo "Downloading Raspberry Pi OS Lite local image..."
           wget -O raspios-lite.img.xz "$IMG_URL" || wget -O raspios-lite.img.xz "https://downloads.raspberrypi.org/raspios_lite_arm64/latest"
           
           if [[ "$(file -b raspios-lite.img.xz)" == *"XZ"* ]]; then
@@ -33,7 +33,7 @@ jobs:
               mv raspios-lite.img.xz raspios-lite.img
           fi
 
-          IMG_FILE=$(ls *.img)
+          IMG_FILE=$(ls *.img | head -n 1)
           echo "Image file: $IMG_FILE"
 
           # 2. İmajı Loop Cihazına Bağla (Mount)
@@ -45,19 +45,32 @@ jobs:
           mkdir -p mnt
           sudo mount "$ROOT_PART" mnt
 
-          # 3. Blender Plymouth Animasyon Dosyalarını Hazırla ve İmaja Göm
+          # 3. Orijinal Raspberry Pi Sihirbazlarını, Firstboot ve Disk Partition Servislerini KÖKTEN SİL
+          sudo chroot mnt systemctl disable raspi-config 2>/dev/null || true
+          sudo chroot mnt systemctl disable firstboot 2>/dev/null || true
+          sudo chroot mnt systemctl disable resize2fs_once 2>/dev/null || true
+          sudo rm -f mnt/etc/systemd/system/sysinit.target.wants/resize2fs_once.service 2>/dev/null || true
+          sudo rm -f mnt/etc/profile.d/raspi-config.sh 2>/dev/null || true
+          sudo rm -f mnt/boot/firstrun.sh 2>/dev/null || true
+
+          # 4. Sabit 'kgamer' Kullanıcısını Manuel Oluştur ve Yetkilendir
+          sudo chroot mnt bash -c "id -u kgamer &>/dev/null || useradd -m -s /bin/bash -G sudo,audio,video,input,games kgamer"
+          sudo chroot mnt bash -c "echo 'kgamer:kgamer' | chpasswd"
+          sudo chroot mnt bash -c "mkdir -p /home/kgamer && chown -R kgamer:kgamer /home/kgamer"
+
+          # 5. Plymouth 30 FPS Blender Animasyonunu (frame_0001 - frame_0150) Doğrudan Kök Dizinden Göm
           THEME_DIR="mnt/usr/share/plymouth/themes/kgamer-boot"
           sudo mkdir -p "$THEME_DIR"
           
-          if [ -f "frame_0001.png" ]; then
+          if ls frame_0001.png 1> /dev/null 2>&1; then
               sudo cp frame_*.png "$THEME_DIR/"
-              echo "150 Blender frames embedded into image."
+              echo "Blender frames (frame_0001 to frame_0150) successfully embedded into image."
           else
-              echo "ERROR: frame_0001.png not found in repository!"
+              echo "ERROR: frame_0001.png not found directly in repository root!"
               exit 1
           fi
 
-          # Plymouth .plymouth Config
+          # Plymouth .plymouth Config (30 FPS Eşit Hız / Slideshow)
           sudo bash -c "cat << 'EOF' > $THEME_DIR/kgamer-boot.plymouth
           [Plymouth Theme]
           Name=KGAMER-RETROGAMER-LINUXOS 30FPS Boot
@@ -103,7 +116,9 @@ jobs:
           Plymouth.SetRefreshFunction(refresh_callback);
           EOF"
 
-          # 4. İlk Açılış Kurulum Betiğini (`kgamer-setup.sh`) ve Servisini İmaja Göm
+          sudo chroot mnt plymouth-set-default-theme -R kgamer-boot || true
+
+          # 6. Gelişmiş Klavye, RPIGAMES ve XFCE/Openbox GUI Destekli kgamer-setup.sh Betiği
           sudo mkdir -p mnt/opt/kgamer
           sudo bash -c "cat << 'EOF' > mnt/opt/kgamer/kgamer-setup.sh
           #!/bin/bash
@@ -111,58 +126,120 @@ jobs:
             exit 1
           fi
 
-          ARCH=\$(uname -m)
-          if [ \"\$ARCH\" = \"aarch64\" ] || [ \"\$ARCH\" = \"arm64\" ]; then
-              RETROPIE_ARCH=\"arm64\"
-          else
-              RETROPIE_ARCH=\"armhf\"
-          fi
-
           CONFIG_DIR=\"/opt/kgamer\"
           APPS_DIR=\"\$CONFIG_DIR/apps\"
           BACKUP_APPS_DIR=\"/opt/kgamer/backup_apps\"
-          PLYMOUTH_THEME_DIR=\"/usr/share/plymouth/themes/kgamer-boot\"
           
           mkdir -p \"\$APPS_DIR\"
           mkdir -p \"\$BACKUP_APPS_DIR\"
-          mkdir -p \"\$PLYMOUTH_THEME_DIR\"
 
-          # Yükleme Çubuğu (Gauge) ile Otomatik Paket Kurulumu
+          # Klavye Seçim Menüsü
+          configure_keyboard_layout() {
+              KB_CHOICE=\$(dialog --clear --title \"KGAMER - KEYBOARD LAYOUT SELECTOR\" \
+                  --menu \"Select your keyboard layout / country:\" 20 60 10 \
+                  \"us\" \"English (US) - Standard QWERTY\" \
+                  \"uk\" \"English (UK)\" \
+                  \"tr\" \"Turkish (Q / F)\" \
+                  \"de\" \"German (DE)\" \
+                  \"fr\" \"French (FR)\" \
+                  \"es\" \"Spanish (ES)\" \
+                  \"it\" \"Italian (IT)\" \
+                  \"br\" \"Portuguese (Brazil)\" \
+                  \"jp\" \"Japanese (JP)\" \
+                  \"other\" \"Other Layout (Manual Selection)\" 3>&1 1>&2 2>&3)
+
+              if [ \"\$KB_CHOICE\" = \"other\" ]; then
+                  CUSTOM_KB=\$(dialog --inputbox \"Enter keyboard layout code (e.g., us, tr, dk, fi):\" 8 50 \"us\" 3>&1 1>&2 2>&3)
+                  [ -n \"\$CUSTOM_KB\" ] && KB_CHOICE=\"\$CUSTOM_KB\"
+              fi
+
+              if [ -n \"\$KB_CHOICE\" ]; then
+                  localectl set-x11-keymap \"\$KB_CHOICE\" 2>/dev/null || true
+                  loadkeys \"\$KB_CHOICE\" 2>/dev/null || true
+                  dialog --msgbox \"Keyboard layout successfully updated to '\$KB_CHOICE'!\" 5 50
+              fi
+          }
+
+          # Yeni Kullanıcı Oluşturma
+          create_new_user_account() {
+              NEW_USER=\$(dialog --inputbox \"Enter new username:\" 8 40 3>&1 1>&2 2>&3)
+              if [ -n \"\$NEW_USER\" ]; then
+                  NEW_PASS=\$(dialog --passwordbox \"Enter password for \$NEW_USER:\" 8 40 3>&1 1>&2 2>&3)
+                  if [ -n \"\$NEW_PASS\" ]; then
+                      useradd -m -s /bin/bash -G sudo,audio,video,input,games \"\$NEW_USER\" 2>/dev/null
+                      echo \"\$NEW_USER:\$NEW_PASS\" | chpasswd
+                      dialog --msgbox \"User '\$NEW_USER' created successfully!\" 5 45
+                  fi
+              fi
+          }
+
+          # Mevcut Kullanıcı Düzenleme
+          edit_existing_user() {
+              TARGET_USER=\$(dialog --inputbox \"Enter existing username to edit (e.g., kgamer):\" 8 50 \"kgamer\" 3>&1 1>&2 2>&3)
+              if id \"\$TARGET_USER\" &>/dev/null; then
+                  ACTION=\$(dialog --clear --title \"Edit User: \$TARGET_USER\" \
+                      --menu \"Select option:\" 12 50 2 \
+                      \"1\" \"Change Username\" \
+                      \"2\" \"Change Password\" 3>&1 1>&2 2>&3)
+                  
+                  if [ \"\$ACTION\" = \"1\" ]; then
+                      NEW_NAME=\$(dialog --inputbox \"Enter new username for \$TARGET_USER:\" 8 50 3>&1 1>&2 2>&3)
+                      if [ -n \"\$NEW_NAME\" ]; then
+                          usermod -l \"\$NEW_NAME\" \"\$TARGET_USER\" 2>/dev/null
+                          dialog --msgbox \"Username changed to '\$NEW_NAME' successfully!\" 5 50
+                      fi
+                  elif [ \"\$ACTION\" = \"2\" ]; then
+                      NEW_P=\$(dialog --passwordbox \"Enter new password for \$TARGET_USER:\" 8 50 3>&1 1>&2 2>&3)
+                      if [ -n \"\$NEW_P\" ]; then
+                          echo \"\$TARGET_USER:\$NEW_P\" | chpasswd
+                          dialog --msgbox \"Password updated successfully!\" 5 40
+                      fi
+                  fi
+              else
+                  dialog --msgbox \"User '\$TARGET_USER' not found!\" 5 40
+              fi
+          }
+
+          # Root Şifresini Değiştirme
+          change_root_password() {
+              ROOT_P=\$(dialog --passwordbox \"Enter new ROOT password:\" 8 50 3>&1 1>&2 2>&3)
+              if [ -n \"\$ROOT_P\" ]; then
+                  echo \"root:\$ROOT_P\" | chpasswd
+                  dialog --msgbox \"Root password updated successfully!\" 5 45
+              fi
+          }
+
+          # İlk açılışta klavye seçimi
+          if [ ! -f \"/opt/kgamer/.keyboard_configured\" ]; then
+              configure_keyboard_layout
+              touch \"/opt/kgamer/.keyboard_configured\"
+          fi
+
+          # Temel Paket Kurulumları
           {
               echo \"10\"
               echo \"==> Updating package lists...\"
               apt-get update -y > /dev/null 2>&1
 
-              echo \"30\"
+              echo \"40\"
               echo \"==> Installing Dialog, Openbox, and XFCE Panel...\"
-              apt-get install -y dialog git wget curl unzip xfce4-panel openbox > /dev/null 2>&1
-
-              echo \"50\"
-              echo \"==> Installing Plymouth Boot Engine & Themes...\"
-              apt-get install -y plymouth plymouth-themes > /dev/null 2>&1
-              plymouth-set-default-theme -R kgamer-boot > /dev/null 2>&1
-              chattr -R +i \"\$PLYMOUTH_THEME_DIR\" 2>/dev/null || true
+              apt-get install -y dialog git wget curl unzip xfce4-panel openbox console-setup > /dev/null 2>&1
 
               echo \"75\"
               echo \"==> Installing Chromium Browser & PCManFM File Manager...\"
               apt-get install -y chromium pcmanfm > /dev/null 2>&1
 
-              echo \"90\"
-              echo \"==> Configuring XFCE Bottom Panel alignment...\"
-              pkill xfce4-panel 2>/dev/null || true
-              xfconf-query -c xfce4-panel -p /panels/panel-1/position -s \"p=6;x=0;y=0\" 2>/dev/null || true
-              xfconf-query -c xfce4-panel -p /panels/panel-1/position-locked -s true 2>/dev/null || true
-              
               echo \"100\"
               echo \"==> KGAMER-RETROGAMER-LINUXOS base setup completed!\"
           } | dialog --title \"KGAMER-RETROGAMER-LINUXOS Setup\" --gauge \"Configuring system components...\" 8 65 0
 
-          # Kısayollar ve Desktop Games / Apps Klasörleri
+          # Otomatik Apps ve RPIGAMES Klasörleri
           create_es_shortcuts() {
               chattr -R -i \"\$APPS_DIR\" 2>/dev/null || true
               mkdir -p \"\$APPS_DIR\"
-              mkdir -p ~/RetroPie/roms/apps
-              mkdir -p ~/RetroPie/roms/desktop-games
+              mkdir -p /home/kgamer/RetroPie/roms/apps
+              mkdir -p /home/kgamer/RetroPie/roms/RPIGAMES
+              mkdir -p /home/kgamer/RetroPie/roms/desktop-games
 
               cat << 'DESK' > \"\$APPS_DIR/terminal.desktop\"
           [Desktop Entry]
@@ -198,14 +275,14 @@ jobs:
           DESK
 
               cp -f \"\$APPS_DIR\"/*.desktop \"\$BACKUP_APPS_DIR/\" 2>/dev/null || true
-              rm -rf ~/RetroPie/roms/apps/*
-              ln -sf \"\$APPS_DIR\"/* ~/RetroPie/roms/apps/ 2>/dev/null
+              rm -rf /home/kgamer/RetroPie/roms/apps/*
+              ln -sf \"\$APPS_DIR\"/* /home/kgamer/RetroPie/roms/apps/ 2>/dev/null
+              chown -R kgamer:kgamer /home/kgamer/RetroPie 2>/dev/null || true
               chattr -R +i \"\$APPS_DIR\" 2>/dev/null || true
           }
 
-          # Akıllı Kaynak Kod Öncelikli RetroPie Kurulumu (4.8.zip)
           auto_install_retropie() {
-              dialog --title \"RetroPie Setup (\$RETROPIE_ARCH)\" --infobox \"Configuring RetroPie & EmulationStation...\nChecking download methods...\" 6 50
+              dialog --title \"RetroPie Setup\" --infobox \"Configuring RetroPie & EmulationStation...\nSetting up apps & RPIGAMES folders...\" 6 55
               
               mkdir -p \"\$CONFIG_DIR\"
               cd \"\$CONFIG_DIR\"
@@ -217,19 +294,7 @@ jobs:
               fi
 
               if [ \$SUCCESS -eq 0 ]; then
-                  dialog --msgbox \"Git authentication required. Switching to source code archive (4.8.zip)...\" 6 60
-              fi
-
-              if [ \$SUCCESS -eq 0 ]; then
                   if curl -L -o retropie.zip https://github.com/RetroPie/RetroPie-Setup/archive/refs/tags/4.8.zip; then
-                      unzip -q retropie.zip
-                      mv RetroPie-Setup-4.8 RetroPie-Setup 2>/dev/null || mv RetroPie-Setup-* RetroPie-Setup 2>/dev/null
-                      if [ -d \"RetroPie-Setup\" ]; then SUCCESS=1; fi
-                  fi
-              fi
-
-              if [ \$SUCCESS -eq 0 ]; then
-                  if wget -O retropie.zip https://github.com/RetroPie/RetroPie-Setup/archive/refs/tags/4.8.zip; then
                       unzip -q retropie.zip
                       mv RetroPie-Setup-4.8 RetroPie-Setup 2>/dev/null || mv RetroPie-Setup-* RetroPie-Setup 2>/dev/null
                       if [ -d \"RetroPie-Setup\" ]; then SUCCESS=1; fi
@@ -244,9 +309,6 @@ jobs:
                   sudo YES=1 ./retropie_packages.sh emulationstation install < /dev/null || true
                   sudo YES=1 ./retropie_packages.sh retroarch install < /dev/null || true
                   create_es_shortcuts
-                  dialog --msgbox \"RetroPie and EmulationStation installed successfully!\" 5 50
-              else
-                  dialog --msgbox \"ERROR: All installation methods failed!\" 5 40
               fi
           }
 
@@ -257,21 +319,23 @@ jobs:
           fi
 
           while true; do
-              if [ ! -f \"\$APPS_DIR/terminal.desktop\" ]; then
-                  chattr -R -i \"\$APPS_DIR\" 2>/dev/null || true
-                  cp -f \"\$BACKUP_APPS_DIR\"/*.desktop \"\$APPS_DIR/\" 2>/dev/null || true
-                  chattr -R +i \"\$APPS_DIR\" 2>/dev/null || true
-              fi
-
               CHOICE=\$(dialog --clear --title \"KGAMER-RETROGAMER-LINUXOS CONTROL CENTER\" \
-                  --menu \"Select action:\" 15 65 4 \
-                  \"1\" \"Launch EmulationStation (Terminal, Chromium & PCManFM in Apps)\" \
-                  \"2\" \"Open Desktop (Openbox / XFCE Bottom Panel Active)\" \
-                  \"3\" \"Exit / Shutdown\" 3>&1 1>&2 2>&3)
+                  --menu \"Select action:\" 18 65 7 \
+                  \"1\" \"RETURN TO EMULATION STATION\" \
+                  \"2\" \"Open GUI Desktop (Openbox & XFCE Panel)\" \
+                  \"3\" \"Change Keyboard Layout\" \
+                  \"4\" \"Create New User Account\" \
+                  \"5\" \"Edit Existing User (Name/Password)\" \
+                  \"6\" \"Change Root Password\" \
+                  \"7\" \"Exit / Shutdown\" 3>&1 1>&2 2>&3)
               case \$CHOICE in
                   1) clear; emulationstation ;;
-                  2) clear; openbox-session ;;
-                  3) clear; exit 0 ;;
+                  2) clear; xfce4-panel & openbox-session ;;
+                  3) configure_keyboard_layout ;;
+                  4) create_new_user_account ;;
+                  5) edit_existing_user ;;
+                  6) change_root_password ;;
+                  7) clear; exit 0 ;;
               esac
           done
           EOF"
@@ -297,7 +361,7 @@ jobs:
 
           sudo chroot mnt systemctl enable kgamer-setup.service
 
-          # 5. Temizlik ve Unmount İşlemleri
+          # 7. Temizlik ve Unmount İşlemleri
           sudo sync
           sudo umount mnt
           sudo partx -d "$LOOP_DEV"
