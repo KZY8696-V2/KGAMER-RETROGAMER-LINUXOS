@@ -36,14 +36,18 @@ jobs:
           IMG_FILE=$(ls *.img | head -n 1)
           echo "Image file: $IMG_FILE"
 
-          # 2. İmajı Loop Cihazına Bağla (Mount)
+          # 2. İmajı Loop Cihazına Bağla (Mount - Hem Kök Hem de Boot Bölümleri)
           LOOP_DEV=$(sudo losetup --find --show "$IMG_FILE")
           sudo partx -a "$LOOP_DEV"
           sleep 3
 
           ROOT_PART="${LOOP_DEV}p2"
+          BOOT_PART="${LOOP_DEV}p1"
+          
           mkdir -p mnt
           sudo mount "$ROOT_PART" mnt
+          sudo mkdir -p mnt/boot/firmware
+          sudo mount "$BOOT_PART" mnt/boot/firmware
 
           # 3. Orijinal Raspberry Pi Sihirbazlarını, Firstboot ve Disk Partition Servislerini KÖKTEN SİL
           sudo chroot mnt systemctl disable raspi-config 2>/dev/null || true
@@ -58,7 +62,7 @@ jobs:
           sudo chroot mnt bash -c "echo 'kgamer:kgamer' | chpasswd"
           sudo chroot mnt bash -c "mkdir -p /home/kgamer && chown -R kgamer:kgamer /home/kgamer"
 
-          # 5. Plymouth Paketini Önceden Yükle ve 30 FPS Blender Animasyonunu Göm
+          # 5. Plymouth Paketini Kur ve 30 FPS Blender Animasyonunu Göm
           sudo chroot mnt apt-get update -y || true
           sudo chroot mnt apt-get install -y plymouth plymouth-themes || true
 
@@ -121,7 +125,7 @@ jobs:
 
           sudo chroot mnt plymouth-set-default-theme -R kgamer-boot || true
 
-          # 6. Gelişmiş Klavye, RPIGAMES ve XFCE/Openbox GUI Destekli kgamer-setup.sh Betiği
+          # 6. Gelişmiş Klavye, RPIGAMES, Apps ve XFCE/Openbox GUI Destekli kgamer-setup.sh Betiği
           sudo mkdir -p mnt/opt/kgamer
           sudo bash -c "cat << 'EOF' > mnt/opt/kgamer/kgamer-setup.sh
           #!/bin/bash
@@ -236,7 +240,7 @@ jobs:
               echo \"==> KGAMER-RETROGAMER-LINUXOS base setup completed!\"
           } | dialog --title \"KGAMER-RETROGAMER-LINUXOS Setup\" --gauge \"Configuring system components...\" 8 65 0
 
-          # Otomatik Apps ve RPIGAMES Klasörleri
+          # Otomatik Apps ve RPIGAMES Klasörleri (Ana Menü ve Apps için)
           create_es_shortcuts() {
               chattr -R -i \"\$APPS_DIR\" 2>/dev/null || true
               mkdir -p \"\$APPS_DIR\"
@@ -364,9 +368,10 @@ jobs:
 
           sudo chroot mnt systemctl enable kgamer-setup.service
 
-          # 7. Temizlik ve Unmount İşlemleri
+          # 7. Temizlik ve Unmount İşlemleri (Önce Boot/Firmware, Sonra Kök Bölüm)
           sudo sync
-          sudo umount mnt
+          sudo umount mnt/boot/firmware || true
+          sudo umount mnt || true
           sudo partx -d "$LOOP_DEV"
           sudo losetup -d "$LOOP_DEV"
 
