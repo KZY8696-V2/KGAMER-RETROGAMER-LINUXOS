@@ -363,7 +363,7 @@ Categories=Application;
 EOF
 
           sudo tee mnt/opt/kgamer/apps/chromium.desktop << 'EOF' > /dev/null
-          [Desktop Entry]
+[Desktop Entry]
 Name=Chromium Browser
 Comment=Web Browser
 Exec=chromium --no-sandbox
