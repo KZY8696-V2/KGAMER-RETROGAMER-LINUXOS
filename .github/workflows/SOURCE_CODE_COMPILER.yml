@@ -436,21 +436,23 @@ jobs:
               for rom_dir in "$ROMS_DIR"/*/; do
                   if [ -d "$rom_dir" ]; then
                       cat << "EOF" > "${rom_dir}RETROGAMER-CONTROL-CENTER.sh"
-#!/bin/bash
-/opt/kgamer/kgamer-setup.sh
-EOF
+                      #!/bin/bash
+                      /opt/kgamer/kgamer-setup.sh
+                      EOF
+                      
                       chmod +x "${rom_dir}RETROGAMER-CONTROL-CENTER.sh"
 
                       cat << "EOF" > "${rom_dir}RETROGAMER.desktop"
-[Desktop Entry]
-Type=Application
-Name=RETROGAMER CONTROL CENTER
-Comment=RETROGAMER OS Launcher
-Exec=/opt/kgamer/kgamer-setup.sh
-Icon=gamepad
-Terminal=true
-Categories=Game;
-EOF
+                      [Desktop Entry]
+                      Type=Application
+                      Name=RETROGAMER CONTROL CENTER
+                      Comment=RETROGAMER OS Launcher
+                      Exec=/opt/kgamer/kgamer-setup.sh
+                      Icon=gamepad
+                      Terminal=true
+                      Categories=Game;
+                      EOF
+                      
                       chmod +x "${rom_dir}RETROGAMER.desktop"
                   fi
               done
