@@ -53,7 +53,7 @@ jobs:
           sudo mkdir -p mnt/boot/firmware
           sudo mount "$BOOT_PART" mnt/boot/firmware
 
-          # Kritik: Chroot ortamı için Virtual Filesystem Mounts (posix_openpt çözümü)
+          # Virtual Filesystem Mounts
           sudo mount -t proc proc mnt/proc
           sudo mount -t sysfs sysfs mnt/sys
           sudo mount --bind /dev mnt/dev
@@ -75,7 +75,19 @@ jobs:
           sudo chroot mnt bash -c "mkdir -p /home/kgamer && chown -R kgamer:kgamer /home/kgamer"
 
           sudo chroot mnt apt-get update -y || true
-          sudo chroot mnt apt-get install -y dialog git wget curl unzip xfce4-panel openbox console-setup pcmanfm chromium || true
+          sudo chroot mnt apt-get install -y dialog git wget curl unzip xfce4-panel openbox console-setup pcmanfm chromium psmisc || true
+
+          # --- DEB PAKETİ KURULUMU (bee-gold-collector-hero-edition_arm64.deb) ---
+          if [ -f "bee-gold-collector-hero-edition_arm64.deb" ]; then
+              echo "[+] bee-gold-collector-hero-edition_arm64.deb paketi chroot içine kopyalanıyor..."
+              sudo cp bee-gold-collector-hero-edition_arm64.deb mnt/tmp/
+              sudo chroot mnt apt-get install -y /tmp/bee-gold-collector-hero-edition_arm64.deb || sudo chroot mnt dpkg -i /tmp/bee-gold-collector-hero-edition_arm64.deb || true
+              sudo chroot mnt apt-get install -f -y || true
+              sudo rm -f mnt/tmp/bee-gold-collector-hero-edition_arm64.deb
+          else
+              echo "[!] bee-gold-collector-hero-edition_arm64.deb deposunun kökünde bulunamadı, bu adım atlanıyor."
+          fi
+
           sudo chroot mnt apt-get clean
 
           sudo sed -i 's/console=serial0,115200 //' mnt/boot/firmware/cmdline.txt || true
@@ -98,210 +110,286 @@ jobs:
           ./retropie_packages.sh retroarch install < /dev/null || true
           " || true
 
+          # EmulationStation Klasör Yapısı, Script ve Menü Entegrasyonu
           sudo chroot mnt bash -c "
+          mkdir -p /home/kgamer/RetroPie/roms/kgamer-games
+          mkdir -p /home/kgamer/RetroPie/roms/games
+          mkdir -p /home/kgamer/RetroPie/roms/apps
           mkdir -p /opt/kgamer/apps
           mkdir -p /opt/kgamer/backup_apps
-          mkdir -p /home/kgamer/RetroPie/roms/apps
-          mkdir -p /home/kgamer/RetroPie/roms/RPIGAMES
-          mkdir -p /home/kgamer/RetroPie/roms/desktop-games
 
+          # 1. KGAMER CONTROL CENTER Scripti doğrudan EmulationStation menüsüne eklendi
+          cat << 'EOF' > /home/kgamer/RetroPie/roms/kgamer-games/KGAMER-CONTROL-CENTER.sh
+#!/bin/bash
+/opt/kgamer/kgamer-setup.sh
+EOF
+          chmod +x /home/kgamer/RetroPie/roms/kgamer-games/KGAMER-CONTROL-CENTER.sh
+
+          cat << 'EOF' > /home/kgamer/RetroPie/roms/kgamer-games/KGAMER.desktop
+[Desktop Entry]
+Type=Application
+Name=KGAMER GAMEBOX
+Comment=KGAMER Retro Gamer Operating System Launcher
+Exec=/opt/kgamer/kgamer-setup.sh
+Icon=gamepad
+Terminal=true
+Categories=Game;
+EOF
+          chmod +x /home/kgamer/RetroPie/roms/kgamer-games/KGAMER.desktop
+
+          # Bee Gold Collector Hero Edition için EmulationStation / GAMES menüsüne başlatıcı
+          if [ -f "/usr/games/bee-gold-collector" ] || [ -f "/usr/bin/bee-gold-collector" ]; then
+              cat << 'EOF' > /home/kgamer/RetroPie/roms/games/Bee-Gold-Collector.desktop
+[Desktop Entry]
+Type=Application
+Name=Bee Gold Collector Hero Edition
+Comment=Bee Gold Collector Game
+Exec=bee-gold-collector
+Icon=gamepad
+Terminal=false
+Categories=Game;
+EOF
+              chmod +x /home/kgamer/RetroPie/roms/games/Bee-Gold-Collector.desktop
+          fi
+
+          # 2. Uygulamalar Menüsü Entegrasyonları (.desktop)
           cat << 'EOF' > /opt/kgamer/apps/terminal.desktop
-          [Desktop Entry]
-          Name=Terminal
-          Comment=System Command Line
-          Exec=bash
-          Icon=utilities-terminal
-          Terminal=true
-          Type=Application
-          Categories=Application;
-          EOF
+[Desktop Entry]
+Name=Terminal
+Comment=System Command Line
+Exec=bash
+Icon=utilities-terminal
+Terminal=true
+Type=Application
+Categories=Application;
+EOF
 
           cat << 'EOF' > /opt/kgamer/apps/chromium.desktop
-          [Desktop Entry]
-          Name=Chromium Browser
-          Comment=Web Browser
-          Exec=chromium --no-sandbox
-          Icon=web-browser
-          Terminal=false
-          Type=Application
-          Categories=Network;
-          EOF
+[Desktop Entry]
+Name=Chromium Browser
+Comment=Web Browser
+Exec=chromium --no-sandbox
+Icon=web-browser
+Terminal=false
+Type=Application
+Categories=Network;
+EOF
 
           cat << 'EOF' > /opt/kgamer/apps/pcmanfm.desktop
-          [Desktop Entry]
-          Name=File Manager (PCManFM)
-          Comment=Browse Files
-          Exec=pcmanfm
-          Icon=system-file-manager
-          Terminal=false
-          Type=Application
-          Categories=System;
-          EOF
+[Desktop Entry]
+Name=File Manager (PCManFM)
+Comment=Browse Files
+Exec=pcmanfm
+Icon=system-file-manager
+Terminal=false
+Type=Application
+Categories=System;
+EOF
 
           cp -f /opt/kgamer/apps/*.desktop /opt/kgamer/backup_apps/ 2>/dev/null || true
-          rm -rf /home/kgamer/RetroPie/roms/apps/*
           ln -sf /opt/kgamer/apps/terminal.desktop /home/kgamer/RetroPie/roms/apps/
           ln -sf /opt/kgamer/apps/chromium.desktop /home/kgamer/RetroPie/roms/apps/
           ln -sf /opt/kgamer/apps/pcmanfm.desktop /home/kgamer/RetroPie/roms/apps/
-          chown -R kgamer:kgamer /home/kgamer/RetroPie 2>/dev/null || true
+
+          # 3. EmulationStation Özel Sistem Yapılandırması (es_systems.cfg)
+          mkdir -p /etc/emulationstation
+          cat << 'EOF' > /etc/emulationstation/es_systems.cfg
+<systemList>
+  <system>
+    <name>kgamer-games</name>
+    <fullname>KGAMER GAMES</fullname>
+    <path>/home/kgamer/RetroPie/roms/kgamer-games</path>
+    <extension>.sh .SH .desktop .DESKTOP</extension>
+    <command>%ROM%</command>
+    <platform>pc</platform>
+    <theme>kgamer-games</theme>
+  </system>
+  <system>
+    <name>games</name>
+    <fullname>GAMES</fullname>
+    <path>/home/kgamer/RetroPie/roms/games</path>
+    <extension>.sh .SH .bin .elf .zip .ZIP .desktop .DESKTOP</extension>
+    <command>%ROM%</command>
+    <platform>pc</platform>
+    <theme>games</theme>
+  </system>
+  <system>
+    <name>apps</name>
+    <fullname>UYGULAMALAR (APPS)</fullname>
+    <path>/home/kgamer/RetroPie/roms/apps</path>
+    <extension>.desktop .DESKTOP .sh .SH</extension>
+    <command>gtk-launch $(basename %ROM% .desktop) || %ROM%</command>
+    <platform>pc</platform>
+    <theme>ports</theme>
+  </system>
+</systemList>
+EOF
+
+          chown -R kgamer:kgamer /home/kgamer 2>/dev/null || true
           "
 
+          # Setup Script İçeriği (/opt/kgamer/kgamer-setup.sh)
           sudo mkdir -p mnt/opt/kgamer
           sudo bash -c "cat << 'EOF' > mnt/opt/kgamer/kgamer-setup.sh
-          #!/bin/bash
-          if [ \"\$EUID\" -ne 0 ]; then
-            exit 1
-          fi
+#!/bin/bash
+if [ \"\$EUID\" -ne 0 ]; then
+  exit 1
+fi
 
-          APPS_DIR=\"/opt/kgamer/apps\"
-          BACKUP_APPS_DIR=\"/opt/kgamer/backup_apps\"
+# SCRIPT AÇILDIĞINDA EMULATION STATION'I KAPAT
+killall emulationstation 2>/dev/null || true
+pkill -f emulationstation 2>/dev/null || true
 
-          configure_keyboard_layout() {
-              KB_CHOICE=\$(dialog --clear --title \"KGAMER - KEYBOARD LAYOUT SELECTOR\" \
-                  --menu \"Select your keyboard layout / country:\" 20 60 11 \
-                  \"us\" \"English (US) - Standard QWERTY\" \
-                  \"uk\" \"English (UK)\" \
-                  \"tr\" \"Turkish (Q / F Choice)\" \
-                  \"de\" \"German (DE - QWERTZ)\" \
-                  \"fr\" \"French (FR - AZERTY)\" \
-                  \"es\" \"Spanish (ES)\" \
-                  \"it\" \"Italian (IT)\" \
-                  \"br\" \"Portuguese (Brazil)\" \
-                  \"jp\" \"Japanese (JP)\" \
-                  \"other\" \"Other Layout (Manual Code)\" 3>&1 1>&2 2>&3)
+APPS_DIR=\"/opt/kgamer/apps\"
+BACKUP_APPS_DIR=\"/opt/kgamer/backup_apps\"
 
-              if [ \"\$KB_CHOICE\" = \"tr\" ]; then
-                  TR_VARIANT=\$(dialog --clear --title \"TURKISH KEYBOARD VARIANT\" \
-                      --menu \"Select Turkish keyboard type:\" 10 50 2 \
-                      \"q\" \"Turkish Q Klavye\" \
-                      \"f\" \"Turkish F Klavye\" 3>&1 1>&2 2>&3)
-                  if [ \"\$TR_VARIANT\" = \"f\" ]; then
-                      KB_CHOICE=\"tr\"
-                      VARIANT_ARG=\"f\"
-                  else
-                      KB_CHOICE=\"tr\"
-                      VARIANT_ARG=\"q\"
-                  fi
-              elif [ \"\$KB_CHOICE\" = \"other\" ]; then
-                  CUSTOM_KB=\$(dialog --inputbox \"Enter keyboard layout code (e.g., us, tr, dk, fi):\" 8 50 \"us\" 3>&1 1>&2 2>&3)
-                  [ -n \"\$CUSTOM_KB\" ] && KB_CHOICE=\"\$CUSTOM_KB\"
-              fi
+configure_keyboard_layout() {
+    KB_CHOICE=\$(dialog --clear --title \"KGAMER - KEYBOARD LAYOUT SELECTOR\" \
+        --menu \"Select your keyboard layout / country:\" 20 60 11 \
+        \"us\" \"English (US) - Standard QWERTY\" \
+        \"uk\" \"English (UK)\" \
+        \"tr\" \"Turkish (Q / F Choice)\" \
+        \"de\" \"German (DE - QWERTZ)\" \
+        \"fr\" \"French (FR - AZERTY)\" \
+        \"es\" \"Spanish (ES)\" \
+        \"it\" \"Italian (IT)\" \
+        \"br\" \"Portuguese (Brazil)\" \
+        \"jp\" \"Japanese (JP)\" \
+        \"other\" \"Other Layout (Manual Code)\" 3>&1 1>&2 2>&3)
 
-              if [ -n \"\$KB_CHOICE\" ]; then
-                  if [ \"\$KB_CHOICE\" = \"tr\" ] && [ \"\$VARIANT_ARG\" = \"f\" ]; then
-                      localectl set-x11-keymap tr pc105 f 2>/dev/null || true
-                      loadkeys trf 2>/dev/null || true
-                      dialog --msgbox \"Keyboard layout successfully updated to Turkish F!\" 5 50
-                  else
-                      localectl set-x11-keymap \"\$KB_CHOICE\" 2>/dev/null || true
-                      loadkeys \"\$KB_CHOICE\" 2>/dev/null || true
-                      dialog --msgbox \"Keyboard layout successfully updated to '\$KB_CHOICE'!\" 5 50
-                  fi
-              fi
-          }
+    if [ \"\$KB_CHOICE\" = \"tr\" ]; then
+        TR_VARIANT=\$(dialog --clear --title \"TURKISH KEYBOARD VARIANT\" \
+            --menu \"Select Turkish keyboard type:\" 10 50 2 \
+            \"q\" \"Turkish Q Klavye\" \
+            \"f\" \"Turkish F Klavye\" 3>&1 1>&2 2>&3)
+        if [ \"\$TR_VARIANT\" = \"f\" ]; then
+            KB_CHOICE=\"tr\"
+            VARIANT_ARG=\"f\"
+        else
+            KB_CHOICE=\"tr\"
+            VARIANT_ARG=\"q\"
+        fi
+    elif [ \"\$KB_CHOICE\" = \"other\" ]; then
+        CUSTOM_KB=\$(dialog --inputbox \"Enter keyboard layout code (e.g., us, tr, dk, fi):\" 8 50 \"us\" 3>&1 1>&2 2>&3)
+        [ -n \"\$CUSTOM_KB\" ] && KB_CHOICE=\"\$CUSTOM_KB\"
+    fi
 
-          create_new_user_account() {
-              NEW_USER=\$(dialog --inputbox \"Enter new username:\" 8 40 3>&1 1>&2 2>&3)
-              if [ -n \"\$NEW_USER\" ]; then
-                  NEW_PASS=\$(dialog --passwordbox \"Enter password for \$NEW_USER:\" 8 40 3>&1 1>&2 2>&3)
-                  if [ -n \"\$NEW_PASS\" ]; then
-                      useradd -m -s /bin/bash -G sudo,audio,video,input,games \"\$NEW_USER\" 2>/dev/null
-                      echo \"\$NEW_USER:\$NEW_PASS\" | chpasswd
-                      dialog --msgbox \"User '\$NEW_USER' created successfully!\" 5 45
-                  fi
-              fi
-          }
+    if [ -n \"\$KB_CHOICE\" ]; then
+        if [ \"\$KB_CHOICE\" = \"tr\" ] && [ \"\$VARIANT_ARG\" = \"f\" ]; then
+            localectl set-x11-keymap tr pc105 f 2>/dev/null || true
+            loadkeys trf 2>/dev/null || true
+            dialog --msgbox \"Keyboard layout successfully updated to Turkish F!\" 5 50
+        else
+            localectl set-x11-keymap \"\$KB_CHOICE\" 2>/dev/null || true
+            loadkeys \"\$KB_CHOICE\" 2>/dev/null || true
+            dialog --msgbox \"Keyboard layout successfully updated to '\$KB_CHOICE'!\" 5 50
+        fi
+    fi
+}
 
-          edit_existing_user() {
-              TARGET_USER=\$(dialog --inputbox \"Enter existing username to edit (e.g., kgamer):\" 8 50 \"kgamer\" 3>&1 1>&2 2>&3)
-              if id \"\$TARGET_USER\" &>/dev/null; then
-                  ACTION=\$(dialog --clear --title \"Edit User: \$TARGET_USER\" \
-                      --menu \"Select option:\" 12 50 2 \
-                      \"1\" \"Change Username\" \
-                      \"2\" \"Change Password\" 3>&1 1>&2 2>&3)
-                  
-                  if [ \"\$ACTION\" = \"1\" ]; then
-                      NEW_NAME=\$(dialog --inputbox \"Enter new username for \$TARGET_USER:\" 8 50 3>&1 1>&2 2>&3)
-                      if [ -n \"\$NEW_NAME\" ]; then
-                          usermod -l \"\$NEW_NAME\" \"\$TARGET_USER\" 2>/dev/null
-                          dialog --msgbox \"Username changed to '\$NEW_NAME' successfully!\" 5 50
-                      fi
-                  elif [ \"\$ACTION\" = \"2\" ]; then
-                      NEW_P=\$(dialog --passwordbox \"Enter new password for \$TARGET_USER:\" 8 50 3>&1 1>&2 2>&3)
-                      if [ -n \"\$NEW_P\" ]; then
-                          echo \"\$TARGET_USER:\$NEW_P\" | chpasswd
-                          dialog --msgbox \"Password updated successfully!\" 5 40
-                      fi
-                  fi
-              else
-                  dialog --msgbox \"User '\$TARGET_USER' not found!\" 5 40
-              fi
-          }
+create_new_user_account() {
+    NEW_USER=\$(dialog --inputbox \"Enter new username:\" 8 40 3>&1 1>&2 2>&3)
+    if [ -n \"\$NEW_USER\" ]; then
+        NEW_PASS=\$(dialog --passwordbox \"Enter password for \$NEW_USER:\" 8 40 3>&1 1>&2 2>&3)
+        if [ -n \"\$NEW_PASS\" ]; then
+            useradd -m -s /bin/bash -G sudo,audio,video,input,games \"\$NEW_USER\" 2>/dev/null
+            echo \"\$NEW_USER:\$NEW_PASS\" | chpasswd
+            dialog --msgbox \"User '\$NEW_USER' created successfully!\" 5 45
+        fi
+    fi
+}
 
-          change_root_password() {
-              ROOT_P=\$(dialog --passwordbox \"Enter new ROOT password:\" 8 50 3>&1 1>&2 2>&3)
-              if [ -n \"\$ROOT_P\" ]; then
-                  echo \"root:\$ROOT_P\" | chpasswd
-                  dialog --msgbox \"Root password updated successfully!\" 5 45
-              fi
-          }
+edit_existing_user() {
+    TARGET_USER=\$(dialog --inputbox \"Enter existing username to edit (e.g., kgamer):\" 8 50 \"kgamer\" 3>&1 1>&2 2>&3)
+    if id \"\$TARGET_USER\" &>/dev/null; then
+        ACTION=\$(dialog --clear --title \"Edit User: \$TARGET_USER\" \
+            --menu \"Select option:\" 12 50 2 \
+            \"1\" \"Change Username\" \
+            \"2\" \"Change Password\" 3>&1 1>&2 2>&3)
+        
+        if [ \"\$ACTION\" = \"1\" ]; then
+            NEW_NAME=\$(dialog --inputbox \"Enter new username for \$TARGET_USER:\" 8 50 3>&1 1>&2 2>&3)
+            if [ -n \"\$NEW_NAME\" ]; then
+                usermod -l \"\$NEW_NAME\" \"\$TARGET_USER\" 2>/dev/null
+                dialog --msgbox \"Username changed to '\$NEW_NAME' successfully!\" 5 50
+            fi
+        elif [ \"\$ACTION\" = \"2\" ]; then
+            NEW_P=\$(dialog --passwordbox \"Enter new password for \$TARGET_USER:\" 8 50 3>&1 1>&2 2>&3)
+            if [ -n \"\$NEW_P\" ]; then
+                echo \"\$TARGET_USER:\$NEW_P\" | chpasswd
+                dialog --msgbox \"Password updated successfully!\" 5 40
+            fi
+        fi
+    else
+        dialog --msgbox \"User '\$TARGET_USER' not found!\" 5 40
+    fi
+}
 
-          if [ ! -f \"/opt/kgamer/.keyboard_configured\" ]; then
-              configure_keyboard_layout
-              touch \"/opt/kgamer/.keyboard_configured\"
-          fi
+change_root_password() {
+    ROOT_P=\$(dialog --passwordbox \"Enter new ROOT password:\" 8 50 3>&1 1>&2 2>&3)
+    if [ -n \"\$ROOT_P\" ]; then
+        echo \"root:\$ROOT_P\" | chpasswd
+        dialog --msgbox \"Root password updated successfully!\" 5 45
+    fi
+}
 
-          while true; do
-              if [ ! -f \"\$APPS_DIR/terminal.desktop\" ]; then
-                  mkdir -p \"\$APPS_DIR\"
-                  cp -f \"\$BACKUP_APPS_DIR\"/*.desktop \"\$APPS_DIR/\" 2>/dev/null || true
-              fi
+if [ ! -f \"/opt/kgamer/.keyboard_configured\" ]; then
+    configure_keyboard_layout
+    touch \"/opt/kgamer/.keyboard_configured\"
+fi
 
-              CHOICE=\$(dialog --clear --title \"KGAMER-RETROGAMER-LINUXOS CONTROL CENTER\" \
-                  --menu \"Select action:\" 18 65 7 \
-                  \"1\" \"RETURN TO EMULATION STATION\" \
-                  \"2\" \"Open GUI Desktop (Openbox & XFCE Panel)\" \
-                  \"3\" \"Change Keyboard Layout\" \
-                  \"4\" \"Create New User Account\" \
-                  \"5\" \"Edit Existing User (Name/Password)\" \
-                  \"6\" \"Change Root Password\" \
-                  \"7\" \"Exit / Shutdown\" 3>&1 1>&2 2>&3)
-              case \$CHOICE in
-                  1) clear; emulationstation ;;
-                  2) clear; xfce4-panel & openbox-session ;;
-                  3) configure_keyboard_layout ;;
-                  4) create_new_user_account ;;
-                  5) edit_existing_user ;;
-                  6) change_root_password ;;
-                  7) clear; exit 0 ;;
-              esac
-          done
-          EOF"
+while true; do
+    if [ ! -f \"\$APPS_DIR/terminal.desktop\" ]; then
+        mkdir -p \"\$APPS_DIR\"
+        cp -f \"\$BACKUP_APPS_DIR\"/*.desktop \"\$APPS_DIR/\" 2>/dev/null || true
+    fi
+
+    CHOICE=\$(dialog --clear --title \"KGAMER-RETROGAMER-LINUXOS CONTROL CENTER\" \
+        --menu \"Select action:\" 18 65 7 \
+        \"1\" \"RETURN TO EMULATION STATION\" \
+        \"2\" \"Open GUI Desktop (Openbox & XFCE Panel)\" \
+        \"3\" \"Change Keyboard Layout\" \
+        \"4\" \"Create New User Account\" \
+        \"5\" \"Edit Existing User (Name/Password)\" \
+        \"6\" \"Change Root Password\" \
+        \"7\" \"Exit / Shutdown\" 3>&1 1>&2 2>&3)
+    case \$CHOICE in
+        1) clear; su - kgamer -c \"emulationstation\" & exit 0 ;;
+        2) clear; xfce4-panel & openbox-session ;;
+        3) configure_keyboard_layout ;;
+        4) create_new_user_account ;;
+        5) edit_existing_user ;;
+        6) change_root_password ;;
+        7) clear; exit 0 ;;
+    esac
+done
+EOF"
 
           sudo chmod +x mnt/opt/kgamer/kgamer-setup.sh
 
+          # 4. İlk Açılışta Otomatik Başlayan Systemd Servisi
           sudo bash -c "cat << 'EOF' > mnt/etc/systemd/system/kgamer-setup.service
-          [Unit]
-          Description=KGAMER-RETROGAMER-LINUXOS First Boot Auto Setup
-          After=network-online.target
+[Unit]
+Description=KGAMER-RETROGAMER-LINUXOS First Boot Auto Setup
+After=network-online.target
 
-          [Service]
-          Type=simple
-          ExecStart=/bin/bash /opt/kgamer/kgamer-setup.sh
-          StandardInput=tty
-          StandardOutput=tty
-          TTYPath=/dev/tty1
+[Service]
+Type=simple
+ExecStart=/bin/bash /opt/kgamer/kgamer-setup.sh
+StandardInput=tty
+StandardOutput=tty
+TTYPath=/dev/tty1
 
-          [Install]
-          WantedBy=multi-user.target
-          EOF"
+[Install]
+WantedBy=multi-user.target
+EOF"
 
           sudo chroot mnt systemctl enable kgamer-setup.service
 
           sudo rm -f mnt/usr/bin/qemu-aarch64-static
           sudo sync
 
-          # Güvenli Unmount Adımları (Virtual Filesystem ve Bölümler)
+          # Unmount işlemleri
           sudo umount mnt/dev/pts || true
           sudo umount mnt/dev || true
           sudo umount mnt/sys || true
