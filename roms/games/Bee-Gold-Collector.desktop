@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Bee Gold Collector Hero Edition
+Comment=Bee Gold Collector Game
+Exec=bee-gold-collector
+Icon=gamepad
+Terminal=false
+Categories=Game;
