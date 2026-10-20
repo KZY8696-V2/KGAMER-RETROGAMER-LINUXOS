@@ -14,7 +14,6 @@ jobs:
 
       - name: Install Image Building Dependencies
         run: |
-          # Microsoft'un hatalı/yasaklı reposunu sistemden kaldır (403 Forbidden engellemek için)
           sudo rm -f /etc/apt/sources.list.d/microsoft*
           sudo rm -f /etc/apt/trusted.gpg.d/microsoft*
 
@@ -80,7 +79,7 @@ jobs:
           sudo chroot mnt apt-get install -y dialog git wget curl unzip xfce4-panel openbox console-setup pcmanfm chromium || true
           sudo chroot mnt apt-get clean
 
-          # --- DEB PAKETİ KURULUMU VE /usr TARAMASI ---
+          # --- DEB PAKETİ KURULUMU ---
           if [ -f "bee-gold-collector-hero-edition_arm64.deb" ]; then
               sudo cp bee-gold-collector-hero-edition_arm64.deb mnt/tmp/
               sudo chroot mnt apt-get install -y /tmp/bee-gold-collector-hero-edition_arm64.deb || sudo chroot mnt dpkg -i /tmp/bee-gold-collector-hero-edition_arm64.deb || true
@@ -104,7 +103,7 @@ jobs:
           ./retropie_packages.sh retroarch install < /dev/null || true
           ' || true
 
-          # Gerekli Dizinler
+          # Gerekli Dizinler ve Başlangıç Dosyaları
           sudo chroot mnt bash -c '
           export DEBIAN_FRONTEND=noninteractive
           mkdir -p /opt/kgamer/apps
@@ -112,7 +111,7 @@ jobs:
           mkdir -p /home/kgamer/RetroPie/roms/apps
           mkdir -p /home/kgamer/RetroPie/roms/games
 
-          cat << "EOF" > /opt/kgamer/apps/terminal.desktop
+          cat << 'EOF' > /opt/kgamer/apps/terminal.desktop
           [Desktop Entry]
           Name=Terminal
           Comment=System Command Line
@@ -123,7 +122,7 @@ jobs:
           Categories=Application;
           EOF
 
-          cat << "EOF" > /opt/kgamer/apps/chromium.desktop
+          cat << 'EOF' > /opt/kgamer/apps/chromium.desktop
           [Desktop Entry]
           Name=Chromium Browser
           Comment=Web Browser
@@ -134,7 +133,7 @@ jobs:
           Categories=Network;
           EOF
 
-          cat << "EOF" > /opt/kgamer/apps/pcmanfm.desktop
+          cat << 'EOF' > /opt/kgamer/apps/pcmanfm.desktop
           [Desktop Entry]
           Name=File Manager (PCManFM)
           Comment=Browse Files
@@ -151,93 +150,93 @@ jobs:
 
           # --- UYGULAMA FİLTRELEME SCRIPTİ (`app-filter.sh`) ---
           sudo mkdir -p mnt/opt/kgamer
-          sudo bash -c "cat << 'EOF' > mnt/opt/kgamer/app-filter.sh
+          sudo tee mnt/opt/kgamer/app-filter.sh << 'EOF' > /dev/null
           #!/bin/bash
-          APPS_SRC=\"/usr/share/applications\"
-          APPS_DEST=\"/home/kgamer/RetroPie/roms/apps\"
-          SPEC_FILE=\"/opt/kgamer/apps_filter.spec\"
+          APPS_SRC="/usr/share/applications"
+          APPS_DEST="/home/kgamer/RetroPie/roms/apps"
+          SPEC_FILE="/opt/kgamer/apps_filter.spec"
 
-          mkdir -p \"\$APPS_DEST\"
+          mkdir -p "$APPS_DEST"
 
           desktop_files=()
           while IFS= read -r file; do
-              if [ -f \"\$file\" ]; then
-                  if grep -q \"NoDisplay=true\" \"\$file\"; then
+              if [ -f "$file" ]; then
+                  if grep -q "NoDisplay=true" "$file"; then
                       continue
                   fi
-                  desktop_files+=(\"\$file\")
+                  desktop_files+=("$file")
               fi
-          done < <(find \"\$APPS_SRC\" -name \"*.desktop\")
+          done < <(find "$APPS_SRC" -name "*.desktop")
 
           dialog_args=()
-          for file in \"\${desktop_files[@]}\"; do
-              desktop_name=\$(basename \"\$file\")
-              app_title=\$(grep -m 1 \"^Name=\" \"\$file\" | cut -d '=' -f2-)
-              [ -z \"\$app_title\" ] && app_title=\"\$desktop_name\"
+          for file in "${desktop_files[@]}"; do
+              desktop_name=$(basename "$file")
+              app_title=$(grep -m 1 "^Name=" "$file" | cut -d '=' -f2-)
+              [ -z "$app_title" ] && app_title="$desktop_name"
               
-              status=\"ON\"
-              if [ -f \"\$SPEC_FILE\" ]; then
-                  if grep -q \"\$desktop_name:OFF\" \"\$SPEC_FILE\"; then
-                      status=\"OFF\"
+              status="ON"
+              if [ -f "$SPEC_FILE" ]; then
+                  if grep -q "$desktop_name:OFF" "$SPEC_FILE"; then
+                      status="OFF"
                   fi
               fi
-              dialog_args+=(\"\$desktop_name\" \"\$app_title\" \"\$status\")
+              dialog_args+=("$desktop_name" "$app_title" "$status")
           done
 
-          CHOICES=\$(dialog --clear --title \"RETROGAMER - APPS VISIBILITY FILTER\" \
-              --checklist \"Select applications to show in EmulationStation APPS menu:\" 22 70 12 \
-              \"\${dialog_args[@]}\" 3>&1 1>&2 2>&3)
+          CHOICES=$(dialog --clear --title "RETROGAMER - APPS VISIBILITY FILTER" \
+              --checklist "Select applications to show in EmulationStation APPS menu:" 22 70 12 \
+              "${dialog_args[@]}" 3>&1 1>&2 2>&3)
 
           clear
 
           visible_apps=()
-          for file in \"\${desktop_files[@]}\"; do
-              desktop_name=\$(basename \"\$file\")
-              if echo \"\$CHOICES\" | grep -q \"\\\"\$desktop_name\\\"\"; then
-                  visible_apps+=(\"\$desktop_name\")
+          for file in "${desktop_files[@]}"; do
+              desktop_name=$(basename "$file")
+              if echo "$CHOICES" \vert{} grep -q "\"$desktop_name\""; then
+                  visible_apps+=("$desktop_name")
               fi
           done
 
-          SORT_CHOICE=\$(dialog --clear --title \"RETROGAMER - APPS SORTING\" \
-              --menu \"Select sorting method for apps:\" 12 50 3 \
-              \"1\" \"Alphabetical Order (A-Z)\" \
-              \"2\" \"Reverse Alphabetical Order (Z-A)\" \
-              \"3\" \"Keep Default / Custom Spec Order\" 3>&1 1>&2 2>&3)
+          SORT_CHOICE=$(dialog --clear --title "RETROGAMER - APPS SORTING" \
+              --menu "Select sorting method for apps:" 12 50 3 \
+              "1" "Alphabetical Order (A-Z)" \
+              "2" "Reverse Alphabetical Order (Z-A)" \
+              "3" "Keep Default / Custom Spec Order" 3>&1 1>&2 2>&3)
 
           clear
 
-          if [ \"\$SORT_CHOICE\" = \"1\" ]; then
-              IFS=\$'\n' sorted_apps=(\$(sort <<< \"\${visible_apps[*]}\"))
+          if [ "$SORT_CHOICE" = "1" ]; then
+              IFS=$'\n' sorted_apps=($(sort <<< "${visible_apps[*]}"))
               unset IFS
-          elif [ \"\$SORT_CHOICE\" = \"2\" ]; then
-              IFS=\$'\n' sorted_apps=(\$(sort -r <<< \"\${visible_apps[*]}\"))
+          elif [ "$SORT_CHOICE" = "2" ]; then
+              IFS=$'\n' sorted_apps=($(sort -r <<< "${visible_apps[*]}"))
               unset IFS
           else
-              sorted_apps=(\"\${visible_apps[@]}\")
+              sorted_apps=("${visible_apps[@]}")
           fi
 
-          find \"\$APPS_DEST\" -name \"*.desktop\" ! -name \"00-Filter-Apps.desktop\" -delete
-          > \"\$SPEC_FILE\"
+          find "$APPS_DEST" -name "*.desktop" ! -name "00-Filter-Apps.desktop" -delete
+          > "$SPEC_FILE"
 
-          for desktop_name in \"\${desktop_files[@]}\"; do
-              base_name=\$(basename \"\$desktop_name\")
-              if echo \"\$CHOICES\" | grep -q \"\\\"\$base_name\\\"\"; then
-                  echo \"\$base_name:ON\" >> \"\$SPEC_FILE\"
+          for desktop_name in "${desktop_files[@]}"; do
+              base_name=$(basename "$desktop_name")
+              if echo "$CHOICES" \vert{} grep -q "\"$base_name\""; then
+                  echo "$base_name:ON" >> "$SPEC_FILE"
               else
-                  echo \"\$base_name:OFF\" >> \"\$SPEC_FILE\"
+                  echo "$base_name:OFF" >> "$SPEC_FILE"
               fi
           done
 
-          for app in \"\${sorted_apps[@]}\"; do
-              ln -sf \"\$APPS_SRC/\$app\" \"\$APPS_DEST/\$app\"
+          for app in "${sorted_apps[@]}"; do
+              ln -sf "$APPS_SRC/$app" "$APPS_DEST/$app"
           done
 
-          dialog --msgbox \"Application filter and sorting updated successfully!\" 6 50
-          EOF"
+          dialog --msgbox "Application filter and sorting updated successfully!" 6 50
+          EOF
           sudo chmod +x mnt/opt/kgamer/app-filter.sh
 
-          # Filtre Yönetim Kısayolu Ekleniyor (`00-Filter-Apps.desktop`)
-          sudo bash -c "cat << 'EOF' > mnt/home/kgamer/RetroPie/roms/apps/00-Filter-Apps.desktop
+          # Filtre Yönetim Kısayolu (`00-Filter-Apps.desktop`)
+          sudo tee mnt/home/kgamer/RetroPie/roms/apps/00-Filter-Apps.desktop << 'EOF' > /dev/null
           [Desktop Entry]
           Name=⚙️ Manage App Filters & Sorting
           Comment=Select and sort apps visible in EmulationStation
@@ -246,143 +245,143 @@ jobs:
           Terminal=true
           Type=Application
           Categories=System;
-          EOF"
+          EOF
 
-          # Bee Gold Collector .desktop Kısayolu (Root Yetkili & /usr Taramalı)
-          sudo bash -c "cat << 'EOF' > mnt/home/kgamer/RetroPie/roms/games/Bee-Gold-Collector.desktop
+          # Bee Gold Collector .desktop Kısayolu
+          sudo tee mnt/home/kgamer/RetroPie/roms/games/Bee-Gold-Collector.desktop << 'EOF' > /dev/null
           [Desktop Entry]
           Type=Application
           Name=Bee Gold Collector Hero Edition
           Comment=Bee Gold Collector Game
-          Exec=sudo bash -c 'BIN_PATH=\$(find /usr -iname \"*bee-gold-collector-hero-edition*\" -type f 2>/dev/null | head -n 1); if [ -n \"\$BIN_PATH\" ]; then \"\$BIN_PATH\"; else /usr/bin/bee-gold-collector-hero-edition; fi'
+          Exec=sudo bash -c 'BIN_PATH=$(find /usr -iname "*bee-gold-collector-hero-edition*" -type f 2>/dev/null | head -n 1); if [ -n "$BIN_PATH" ]; then "$BIN_PATH"; else /usr/bin/bee-gold-collector-hero-edition; fi'
           Icon=gamepad
           Terminal=false
           Categories=Game;
-          EOF"
+          EOF
 
           # --- KONTROL MERKEZİ SCRIPTİ (`kgamer-setup.sh`) ---
-          sudo bash -c "cat << 'EOF' > mnt/opt/kgamer/kgamer-setup.sh
+          sudo tee mnt/opt/kgamer/kgamer-setup.sh << 'EOF' > /dev/null
           #!/bin/bash
-          if [ \"\$EUID\" -ne 0 ]; then
+          if [ "$EUID" -ne 0 ]; then
               exit 1
           fi
 
-          APPS_DIR=\"/opt/kgamer/apps\"
-          BACKUP_APPS_DIR=\"/opt/kgamer/backup_apps\"
+          APPS_DIR="/opt/kgamer/apps"
+          BACKUP_APPS_DIR="/opt/kgamer/backup_apps"
 
           configure_keyboard_layout() {
-              KB_CHOICE=\$(dialog --clear --title \"RETROGAMER - KEYBOARD LAYOUT SELECTOR\" \
-                  --menu \"Select your keyboard layout / country:\" 20 60 11 \
-                  \"us\" \"English (US) - Standard QWERTY\" \
-                  \"uk\" \"English (UK)\" \
-                  \"tr\" \"Turkish (Q / F Choice)\" \
-                  \"de\" \"German (DE - QWERTZ)\" \
-                  \"fr\" \"French (FR - AZERTY)\" \
-                  \"es\" \"Spanish (ES)\" \
-                  \"it\" \"Italian (IT)\" \
-                  \"br\" \"Portuguese (Brazil)\" \
-                  \"jp\" \"Japanese (JP)\" \
-                  \"other\" \"Other Layout (Manual Code)\" 3>&1 1>&2 2>&3)
+              KB_CHOICE=$(dialog --clear --title "RETROGAMER - KEYBOARD LAYOUT SELECTOR" \
+                  --menu "Select your keyboard layout / country:" 20 60 11 \
+                  "us" "English (US) - Standard QWERTY" \
+                  "uk" "English (UK)" \
+                  "tr" "Turkish (Q / F Choice)" \
+                  "de" "German (DE - QWERTZ)" \
+                  "fr" "French (FR - AZERTY)" \
+                  "es" "Spanish (ES)" \
+                  "it" "Italian (IT)" \
+                  "br" "Portuguese (Brazil)" \
+                  "jp" "Japanese (JP)" \
+                  "other" "Other Layout (Manual Code)" 3>&1 1>&2 2>&3)
 
-              if [ \"\$KB_CHOICE\" = \"tr\" ]; then
-                  TR_VARIANT=\$(dialog --clear --title \"TURKISH KEYBOARD VARIANT\" \
-                      --menu \"Select Turkish keyboard type:\" 10 50 2 \
-                      \"q\" \"Turkish Q Klavye\" \
-                      \"f\" \"Turkish F Klavye\" 3>&1 1>&2 2>&3)
-                  if [ \"\$TR_VARIANT\" = \"f\" ]; then
-                      KB_CHOICE=\"tr\"
-                      VARIANT_ARG=\"f\"
+              if [ "$KB_CHOICE" = "tr" ]; then
+                  TR_VARIANT=$(dialog --clear --title "TURKISH KEYBOARD VARIANT" \
+                      --menu "Select Turkish keyboard type:" 10 50 2 \
+                      "q" "Turkish Q Klavye" \
+                      "f" "Turkish F Klavye" 3>&1 1>&2 2>&3)
+                  if [ "$TR_VARIANT" = "f" ]; then
+                      KB_CHOICE="tr"
+                      VARIANT_ARG="f"
                   else
-                      KB_CHOICE=\"tr\"
-                      VARIANT_ARG=\"q\"
+                      KB_CHOICE="tr"
+                      VARIANT_ARG="q"
                   fi
-              elif [ \"\$KB_CHOICE\" = \"other\" ]; then
-                  CUSTOM_KB=\$(dialog --inputbox \"Enter keyboard layout code (e.g., us, tr, dk, fi):\" 8 50 \"us\" 3>&1 1>&2 2>&3)
-                  [ -n \"\$CUSTOM_KB\" ] && KB_CHOICE=\"\$CUSTOM_KB\"
+              elif [ "$KB_CHOICE" = "other" ]; then
+                  CUSTOM_KB=$(dialog --inputbox "Enter keyboard layout code (e.g., us, tr, dk, fi):" 8 50 "us" 3>&1 1>&2 2>&3)
+                  [ -n "$CUSTOM_KB" ] && KB_CHOICE="$CUSTOM_KB"
               fi
 
-              if [ -n \"\$KB_CHOICE\" ]; then
-                  if [ \"\$KB_CHOICE\" = \"tr\" ] && [ \"\$VARIANT_ARG\" = \"f\" ]; then
+              if [ -n "$KB_CHOICE" ]; then
+                  if [ "$KB_CHOICE" = "tr" ] && [ "$VARIANT_ARG" = "f" ]; then
                       localectl set-x11-keymap tr pc105 f 2>/dev/null || true
                       loadkeys trf 2>/dev/null || true
-                      dialog --msgbox \"Keyboard layout successfully updated to Turkish F!\" 5 50
+                      dialog --msgbox "Keyboard layout successfully updated to Turkish F!" 5 50
                   else
-                      localectl set-x11-keymap \"\$KB_CHOICE\" 2>/dev/null || true
-                      loadkeys \"\$KB_CHOICE\" 2>/dev/null || true
-                      dialog --msgbox \"Keyboard layout successfully updated to '\$KB_CHOICE'!\" 5 50
+                      localectl set-x11-keymap "$KB_CHOICE" 2>/dev/null || true
+                      loadkeys "$KB_CHOICE" 2>/dev/null || true
+                      dialog --msgbox "Keyboard layout successfully updated to '$KB_CHOICE'!" 5 50
                   fi
               fi
           }
 
           create_new_user_account() {
               while true; do
-                  NEW_USER=\$(dialog --clear --title \"NEW USER SETUP (MANDATORY)\" \
-                      --inputbox \"Enter new username (Cannot be empty):\" 8 50 3>&1 1>&2 2>&3)
-                  [ -z \"\$NEW_USER\" ] && continue
+                  NEW_USER=$(dialog --clear --title "NEW USER SETUP (MANDATORY)" \
+                      --inputbox "Enter new username (Cannot be empty):" 8 50 3>&1 1>&2 2>&3)
+                  [ -z "$NEW_USER" ] && continue
                   
-                  if id \"\$NEW_USER\" &>/dev/null; then
-                      dialog --msgbox \"User '\$NEW_USER' already exists! Choose another name.\" 6 50
+                  if id "$NEW_USER" &>/dev/null; then
+                      dialog --msgbox "User '$NEW_USER' already exists! Choose another name." 6 50
                       continue
                   fi
                   break
               done
 
               while true; do
-                  NEW_PASS=\$(dialog --clear --title \"NEW USER PASSWORD (MANDATORY)\" \
-                      --passwordbox \"Enter password for \$NEW_USER (Cannot be empty):\" 8 50 3>&1 1>&2 2>&3)
-                  [ -z \"\$NEW_PASS\" ] && continue
+                  NEW_PASS=$(dialog --clear --title "NEW USER PASSWORD (MANDATORY)" \
+                      --passwordbox "Enter password for $NEW_USER (Cannot be empty):" 8 50 3>&1 1>&2 2>&3)
+                  [ -z "$NEW_PASS" ] && continue
                   break
               done
 
-              useradd -m -s /bin/bash -G sudo,audio,video,input,games \"\$NEW_USER\" 2>/dev/null
-              echo \"\$NEW_USER:\$NEW_PASS\" | chpasswd
-              dialog --msgbox \"User '\$NEW_USER' created successfully!\" 5 45
+              useradd -m -s /bin/bash -G sudo,audio,video,input,games "$NEW_USER" 2>/dev/null
+              echo "$NEW_USER:$NEW_PASS" | chpasswd
+              dialog --msgbox "User '$NEW_USER' created successfully!" 5 45
           }
 
           edit_existing_user() {
               while true; do
-                  TARGET_USER=\$(dialog --clear --title \"EDIT USER (MANDATORY)\" \
-                      --inputbox \"Enter existing username to edit (e.g., kgamer):\" 8 50 \"kgamer\" 3>&1 1>&2 2>&3)
-                  [ -z \"\$TARGET_USER\" ] && continue
+                  TARGET_USER=$(dialog --clear --title "EDIT USER (MANDATORY)" \
+                      --inputbox "Enter existing username to edit (e.g., kgamer):" 8 50 "kgamer" 3>&1 1>&2 2>&3)
+                  [ -z "$TARGET_USER" ] && continue
                   
-                  if id \"\$TARGET_USER\" &>/dev/null; then
+                  if id "$TARGET_USER" &>/dev/null; then
                       break
                   else
-                      dialog --msgbox \"User '\$TARGET_USER' not found! Try again.\" 5 45
+                      dialog --msgbox "User '$TARGET_USER' not found! Try again." 5 45
                   fi
               done
 
-              ACTION=\$(dialog --clear --title \"Edit User: \$TARGET_USER\" \
-                  --menu \"Select option:\" 12 50 2 \
-                  \"1\" \"Change Username\" \
-                  \"2\" \"Change Password\" 3>&1 1>&2 2>&3)
+              ACTION=$(dialog --clear --title "Edit User: $TARGET_USER" \
+                  --menu "Select option:" 12 50 2 \
+                  "1" "Change Username" \
+                  "2" "Change Password" 3>&1 1>&2 2>&3)
               
-              if [ \"\$ACTION\" = \"1\" ]; then
+              if [ "$ACTION" = "1" ]; then
                   while true; do
-                      NEW_NAME=\$(dialog --clear --title \"CHANGE USERNAME\" \
-                          --inputbox \"Enter new username for \$TARGET_USER:\" 8 50 3>&1 1>&2 2>&3)
-                      [ -z \"\$NEW_NAME\" ] && continue
-                      usermod -l \"\$NEW_NAME\" \"\$TARGET_USER\" 2>/dev/null
-                      dialog --msgbox \"Username changed to '\$NEW_NAME' successfully!\" 5 50
+                      NEW_NAME=$(dialog --clear --title "CHANGE USERNAME" \
+                          --inputbox "Enter new username for $TARGET_USER:" 8 50 3>&1 1>&2 2>&3)
+                      [ -z "$NEW_NAME" ] && continue
+                      usermod -l "$NEW_NAME" "$TARGET_USER" 2>/dev/null
+                      dialog --msgbox "Username changed to '$NEW_NAME' successfully!" 5 50
                       break
                   done
-              elif [ \"\$ACTION\" = \"2\" ]; then
+              elif [ "$ACTION" = "2" ]; then
                   while true; do
-                      NEW_P=\$(dialog --clear --title \"CHANGE PASSWORD\" \
-                          --passwordbox \"Enter new password for \$TARGET_USER:\" 8 50 3>&1 1>&2 2>&3)
-                      [ -z \"\$NEW_P\" ] && continue
-                      echo \"\$TARGET_USER:\$NEW_P\" | chpasswd
-                      dialog --msgbox \"Password updated successfully!\" 5 40
+                      NEW_P=$(dialog --clear --title "CHANGE PASSWORD" \
+                          --passwordbox "Enter new password for $TARGET_USER:" 8 50 3>&1 1>&2 2>&3)
+                      [ -z "$NEW_P" ] && continue
+                      echo "$TARGET_USER:$NEW_P" | chpasswd
+                      dialog --msgbox "Password updated successfully!" 5 40
                       break
                   done
               fi
           }
 
           change_root_password() {
-              ROOT_P=\$(dialog --passwordbox \"Enter new ROOT password:\" 8 50 3>&1 1>&2 2>&3)
-              if [ -n \"\$ROOT_P\" ]; then
-                  echo \"root:\$ROOT_P\" | chpasswd
-                  dialog --msgbox \"Root password updated successfully!\" 5 45
+              ROOT_P=$(dialog --passwordbox "Enter new ROOT password:" 8 50 3>&1 1>&2 2>&3)
+              if [ -n "$ROOT_P" ]; then
+                  echo "root:$ROOT_P" | chpasswd
+                  dialog --msgbox "Root password updated successfully!" 5 45
               fi
           }
 
@@ -390,32 +389,32 @@ jobs:
               clear
               echo "[+] Openbox ve Alttaki XFCE Paneli başlatılıyor..."
               export DISPLAY=:0
-              xfconf-query -c xfce4-panel -p /panels/panel-1/position -s \"p=8;x=0;y=0\" --create -t string 2>/dev/null || true
+              xfconf-query -c xfce4-panel -p /panels/panel-1/position -s "p=8;x=0;y=0" --create -t string 2>/dev/null || true
               xfce4-panel --display=:0 &
               exec openbox-session
           }
 
-          if [ ! -f \"/opt/kgamer/.keyboard_configured\" ]; then
+          if [ ! -f "/opt/kgamer/.keyboard_configured" ]; then
               configure_keyboard_layout
-              touch \"/opt/kgamer/.keyboard_configured\"
+              touch "/opt/kgamer/.keyboard_configured"
           fi
 
           while true; do
-              if [ ! -f \"\$APPS_DIR/terminal.desktop\" ]; then
-                  mkdir -p \"\$APPS_DIR\"
-                  cp -f \"\$BACKUP_APPS_DIR\"/*.desktop \"\$APPS_DIR/\" 2>/dev/null || true
+              if [ ! -f "$APPS_DIR/terminal.desktop" ]; then
+                  mkdir -p "$APPS_DIR"
+                  cp -f "$BACKUP_APPS_DIR"/*.desktop "$APPS_DIR/" 2>/dev/null || true
               fi
 
-              CHOICE=\$(dialog --clear --title \"RETROGAMER CONTROL CENTER\" \
-                  --menu \"Select action:\" 18 65 7 \
-                  \"1\" \"RETURN TO EMULATION STATION\" \
-                  \"2\" \"Open GUI Desktop (Openbox & Bottom XFCE Panel)\" \
-                  \"3\" \"Change Keyboard Layout\" \
-                  \"4\" \"Create New User Account\" \
-                  \"5\" \"Edit Existing User (Name/Password)\" \
-                  \"6\" \"Change Root Password\" \
-                  \"7\" \"Exit / Shutdown\" 3>&1 1>&2 2>&3)
-              case \$CHOICE in
+              CHOICE=$(dialog --clear --title "RETROGAMER CONTROL CENTER" \
+                  --menu "Select action:" 18 65 7 \
+                  "1" "RETURN TO EMULATION STATION" \
+                  "2" "Open GUI Desktop (Openbox & Bottom XFCE Panel)" \
+                  "3" "Change Keyboard Layout" \
+                  "4" "Create New User Account" \
+                  "5" "Edit Existing User (Name/Password)" \
+                  "6" "Change Root Password" \
+                  "7" "Exit / Shutdown" 3>&1 1>&2 2>&3)
+              case $CHOICE in
                   1) clear; emulationstation ;;
                   2) start_desktop_environment ;;
                   3) configure_keyboard_layout ;;
@@ -425,7 +424,7 @@ jobs:
                   7) clear; exit 0 ;;
               esac
           done
-          EOF"
+          EOF
 
           sudo chmod +x mnt/opt/kgamer/kgamer-setup.sh
 
@@ -436,23 +435,21 @@ jobs:
               for rom_dir in "$ROMS_DIR"/*/; do
                   if [ -d "$rom_dir" ]; then
                       cat << "EOF" > "${rom_dir}RETROGAMER-CONTROL-CENTER.sh"
-                      #!/bin/bash
-                      /opt/kgamer/kgamer-setup.sh
-                      EOF
-                      
+#!/bin/bash
+/opt/kgamer/kgamer-setup.sh
+EOF
                       chmod +x "${rom_dir}RETROGAMER-CONTROL-CENTER.sh"
 
                       cat << "EOF" > "${rom_dir}RETROGAMER.desktop"
-                      [Desktop Entry]
-                      Type=Application
-                      Name=RETROGAMER CONTROL CENTER
-                      Comment=RETROGAMER OS Launcher
-                      Exec=/opt/kgamer/kgamer-setup.sh
-                      Icon=gamepad
-                      Terminal=true
-                      Categories=Game;
-                      EOF
-                      
+[Desktop Entry]
+Type=Application
+Name=RETROGAMER CONTROL CENTER
+Comment=RETROGAMER OS Launcher
+Exec=/opt/kgamer/kgamer-setup.sh
+Icon=gamepad
+Terminal=true
+Categories=Game;
+EOF
                       chmod +x "${rom_dir}RETROGAMER.desktop"
                   fi
               done
@@ -460,7 +457,7 @@ jobs:
           '
 
           # Systemd Servis Tanımlama
-          sudo bash -c "cat << 'EOF' > mnt/etc/systemd/system/kgamer-setup.service
+          sudo tee mnt/etc/systemd/system/kgamer-setup.service << 'EOF' > /dev/null
           [Unit]
           Description=RETROGAMER First Boot Auto Setup
           After=network-online.target
@@ -474,7 +471,7 @@ jobs:
 
           [Install]
           WantedBy=multi-user.target
-          EOF"
+          EOF
 
           sudo chroot mnt systemctl enable kgamer-setup.service
           sudo chown -R kgamer:kgamer mnt/home/kgamer 2>/dev/null || true
