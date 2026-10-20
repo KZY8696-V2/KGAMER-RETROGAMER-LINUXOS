@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=KGAMER RETROGAMER
+Comment=KGAMER Retro Gamer Operating System Launcher
+Exec=/opt/kgamer/kgamer-setup.sh
+Icon=gamepad
+Terminal=true
+Categories=Game;
