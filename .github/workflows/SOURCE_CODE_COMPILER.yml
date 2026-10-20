@@ -100,14 +100,15 @@ jobs:
           ./retropie_packages.sh retroarch install < /dev/null || true
           ' || true
 
-          # Gerekli Dizinler
+          # Gerekli Dizinler ve Uygulama Dosyaları (Chroot İçinde Doğru Sıralama)
           sudo chroot mnt bash -c '
+          export DEBIAN_FRONTEND=noninteractive
           mkdir -p /opt/kgamer/apps
           mkdir -p /opt/kgamer/backup_apps
           mkdir -p /home/kgamer/RetroPie/roms/apps
           mkdir -p /home/kgamer/RetroPie/roms/games
 
-          cat << \'EOF\' > /opt/kgamer/apps/terminal.desktop
+          cat << "EOF" > /opt/kgamer/apps/terminal.desktop
           [Desktop Entry]
           Name=Terminal
           Comment=System Command Line
@@ -118,7 +119,7 @@ jobs:
           Categories=Application;
           EOF
 
-          cat << \'EOF\' > /opt/kgamer/apps/chromium.desktop
+          cat << "EOF" > /opt/kgamer/apps/chromium.desktop
           [Desktop Entry]
           Name=Chromium Browser
           Comment=Web Browser
@@ -129,7 +130,7 @@ jobs:
           Categories=Network;
           EOF
 
-          cat << \'EOF\' > /opt/kgamer/apps/pcmanfm.desktop
+          cat << "EOF" > /opt/kgamer/apps/pcmanfm.desktop
           [Desktop Entry]
           Name=File Manager (PCManFM)
           Comment=Browse Files
@@ -143,7 +144,6 @@ jobs:
           cp -f /opt/kgamer/apps/*.desktop /opt/kgamer/backup_apps/ 2>/dev/null || true
           chown -R kgamer:kgamer /home/kgamer/RetroPie 2>/dev/null || true
           '
-
           # --- UYGULAMA FİLTRELEME SCRIPTİ (`app-filter.sh`) ---
           sudo mkdir -p mnt/opt/kgamer
           sudo bash -c "cat << 'EOF' > mnt/opt/kgamer/app-filter.sh
