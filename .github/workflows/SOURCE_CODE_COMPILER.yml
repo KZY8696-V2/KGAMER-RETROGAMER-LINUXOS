@@ -111,7 +111,7 @@ jobs:
           mkdir -p /home/kgamer/RetroPie/roms/apps
           mkdir -p /home/kgamer/RetroPie/roms/games
 
-          cat << 'EOF' > /opt/kgamer/apps/terminal.desktop
+          cat << "EOF" > /opt/kgamer/apps/terminal.desktop
           [Desktop Entry]
           Name=Terminal
           Comment=System Command Line
@@ -122,7 +122,7 @@ jobs:
           Categories=Application;
           EOF
 
-          cat << 'EOF' > /opt/kgamer/apps/chromium.desktop
+          cat << "EOF" > /opt/kgamer/apps/chromium.desktop
           [Desktop Entry]
           Name=Chromium Browser
           Comment=Web Browser
@@ -133,7 +133,7 @@ jobs:
           Categories=Network;
           EOF
 
-          cat << 'EOF' > /opt/kgamer/apps/pcmanfm.desktop
+          cat << "EOF" > /opt/kgamer/apps/pcmanfm.desktop
           [Desktop Entry]
           Name=File Manager (PCManFM)
           Comment=Browse Files
@@ -429,32 +429,30 @@ jobs:
           sudo chmod +x mnt/opt/kgamer/kgamer-setup.sh
 
           # --- TÜM ROM KLASÖRLERİNE KONTROL MERKEZİ EKLEME ---
-          sudo chroot mnt bash -c '
-          ROMS_DIR="/home/kgamer/RetroPie/roms"
+          ROMS_DIR="mnt/home/kgamer/RetroPie/roms"
           if [ -d "$ROMS_DIR" ]; then
               for rom_dir in "$ROMS_DIR"/*/; do
                   if [ -d "$rom_dir" ]; then
-                      cat <<- "EOF" > "${rom_dir}RETROGAMER-CONTROL-CENTER.sh"
-                      #!/bin/bash
-                      /opt/kgamer/kgamer-setup.sh
-                      EOF
-                      chmod +x "${rom_dir}RETROGAMER-CONTROL-CENTER.sh"
+                      sudo bash -c "cat << 'SCRIPT_EOF' > '${rom_dir}RETROGAMER-CONTROL-CENTER.sh'
+          #!/bin/bash
+          /opt/kgamer/kgamer-setup.sh
+          SCRIPT_EOF"
+                      sudo chmod +x "${rom_dir}RETROGAMER-CONTROL-CENTER.sh"
 
-                      cat <<- "EOF" > "${rom_dir}RETROGAMER.desktop"
-                      [Desktop Entry]
-                      Type=Application
-                      Name=RETROGAMER CONTROL CENTER
-                      Comment=RETROGAMER OS Launcher
-                      Exec=/opt/kgamer/kgamer-setup.sh
-                      Icon=gamepad
-                      Terminal=true
-                      Categories=Game;
-                      EOF
-                      chmod +x "${rom_dir}RETROGAMER.desktop"
+                      sudo bash -c "cat << 'DESKTOP_EOF' > '${rom_dir}RETROGAMER.desktop'
+          [Desktop Entry]
+          Type=Application
+          Name=RETROGAMER CONTROL CENTER
+          Comment=RETROGAMER OS Launcher
+          Exec=/opt/kgamer/kgamer-setup.sh
+          Icon=gamepad
+          Terminal=true
+          Categories=Game;
+          DESKTOP_EOF"
+                      sudo chmod +x "${rom_dir}RETROGAMER.desktop"
                   fi
               done
           fi
-          '
 
           # Systemd Servis Tanımlama
           sudo tee mnt/etc/systemd/system/kgamer-setup.service << 'EOF' > /dev/null
