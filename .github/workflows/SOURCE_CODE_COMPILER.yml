@@ -23,7 +23,6 @@ jobs:
 
           IMG_URL="https://downloads.raspberrypi.org/raspios_lite_arm64/images/raspios_lite_arm64-2024-03-15/2024-03-15-raspios-bookworm-arm64-lite.img.xz"
           
-          echo "Downloading Raspberry Pi OS Lite local image..."
           wget -O raspios-lite.img.xz "$IMG_URL" || wget -O raspios-lite.img.xz "https://downloads.raspberrypi.org/raspios_lite_arm64/latest"
           
           if [[ "$(file -b raspios-lite.img.xz)" == *"XZ"* ]]; then
@@ -33,8 +32,6 @@ jobs:
           fi
 
           IMG_FILE=$(ls *.img | head -n 1)
-          echo "Image file: $IMG_FILE"
-
           truncate -s +4G "$IMG_FILE"
           
           LOOP_DEV=$(sudo losetup --find --show "$IMG_FILE")
@@ -53,22 +50,17 @@ jobs:
           sudo mkdir -p mnt/boot/firmware
           sudo mount "$BOOT_PART" mnt/boot/firmware
 
-          # Virtual Filesystem Mounts
           sudo mount -t proc proc mnt/proc
           sudo mount -t sysfs sysfs mnt/sys
           sudo mount --bind /dev mnt/dev
           sudo mount --bind /dev/pts mnt/dev/pts
 
           sudo bash -c "echo '/dev/root / ext4 defaults,noatime 0 1' > mnt/etc/fstab"
-
           sudo cp /usr/bin/qemu-aarch64-static mnt/usr/bin/
 
           sudo chroot mnt systemctl disable raspi-config 2>/dev/null || true
           sudo chroot mnt systemctl disable firstboot 2>/dev/null || true
           sudo chroot mnt systemctl disable resize2fs_once 2>/dev/null || true
-          sudo rm -f mnt/etc/systemd/system/sysinit.target.wants/resize2fs_once.service 2>/dev/null || true
-          sudo rm -f mnt/etc/profile.d/raspi-config.sh 2>/dev/null || true
-          sudo rm -f mnt/boot/firstrun.sh 2>/dev/null || true
 
           sudo chroot mnt bash -c "id -u kgamer &>/dev/null || useradd -m -s /bin/bash -G sudo,audio,video,input,games kgamer"
           sudo chroot mnt bash -c "echo 'kgamer:kgamer' | chpasswd"
@@ -77,25 +69,16 @@ jobs:
           sudo chroot mnt apt-get update -y || true
           sudo chroot mnt apt-get install -y dialog git wget curl unzip xfce4-panel openbox console-setup pcmanfm chromium || true
 
-          # --- DEB PAKETİ KURULUMU ---
           if [ -f "bee-gold-collector-hero-edition_arm64.deb" ]; then
-              echo "[+] bee-gold-collector-hero-edition_arm64.deb paketi chroot içine kopyalanıyor..."
               sudo cp bee-gold-collector-hero-edition_arm64.deb mnt/tmp/
               sudo chroot mnt apt-get install -y /tmp/bee-gold-collector-hero-edition_arm64.deb || sudo chroot mnt dpkg -i /tmp/bee-gold-collector-hero-edition_arm64.deb || true
               sudo chroot mnt apt-get install -f -y || true
               sudo rm -f mnt/tmp/bee-gold-collector-hero-edition_arm64.deb
-          else
-              echo "[!] bee-gold-collector-hero-edition_arm64.deb bulunamadı, atlanıyor."
           fi
 
           sudo chroot mnt apt-get clean
 
-          sudo sed -i 's/console=serial0,115200 //' mnt/boot/firmware/cmdline.txt || true
-          if ! grep -q "quiet" mnt/boot/firmware/cmdline.txt; then
-              sudo sed -i 's/rootwait/rootwait quiet splash logo.nologo vt.global_cursor_default=0/' mnt/boot/firmware/cmdline.txt || true
-          fi
-
-          # --- RETROPIE KURULUMU ---
+          # RetroPie Kurulumu
           sudo chroot mnt bash -c '
           export DEBIAN_FRONTEND=noninteractive
           mkdir -p /opt/kgamer
@@ -111,120 +94,16 @@ jobs:
           ./retropie_packages.sh retroarch install < /dev/null || true
           ' || true
 
-          # --- EMULATIONSTATION & KLASÖR YAPILANDIRMASI (Tek parça script dosyası olarak yazılıyor) ---
+          # Dizinler
           sudo mkdir -p mnt/home/kgamer/RetroPie/roms/kgamer-games
           sudo mkdir -p mnt/home/kgamer/RetroPie/roms/games
           sudo mkdir -p mnt/home/kgamer/RetroPie/roms/apps
           sudo mkdir -p mnt/opt/kgamer/apps
           sudo mkdir -p mnt/opt/kgamer/backup_apps
-
-          # KGAMER CONTROL CENTER Scripti EmulationStation Menüsüne
-          sudo tee mnt/home/kgamer/RetroPie/roms/kgamer-games/KGAMER-CONTROL-CENTER.sh << 'EOF' > /dev/null
-#!/bin/bash
-/opt/kgamer/kgamer-setup.sh
-EOF
-          sudo chmod +x mnt/home/kgamer/RetroPie/roms/kgamer-games/KGAMER-CONTROL-CENTER.sh
-
-          sudo tee mnt/home/kgamer/RetroPie/roms/kgamer-games/KGAMER.desktop << 'EOF' > /dev/null
-[Desktop Entry]
-Type=Application
-Name=KGAMER GAMEBOX
-Comment=KGAMER Retro Gamer Operating System Launcher
-Exec=/opt/kgamer/kgamer-setup.sh
-Icon=gamepad
-Terminal=true
-Categories=Game;
-EOF
-          sudo chmod +x mnt/home/kgamer/RetroPie/roms/kgamer-games/KGAMER.desktop
-
-          # Bee Gold Collector Başlatıcısı
-          sudo tee mnt/home/kgamer/RetroPie/roms/games/Bee-Gold-Collector.desktop << 'EOF' > /dev/null
-[Desktop Entry]
-Type=Application
-Name=Bee Gold Collector Hero Edition
-Comment=Bee Gold Collector Game
-Exec=bee-gold-collector
-Icon=gamepad
-Terminal=false
-Categories=Game;
-EOF
-          sudo chmod +x mnt/home/kgamer/RetroPie/roms/games/Bee-Gold-Collector.desktop
-
-          # Uygulamalar (.desktop)
-          sudo tee mnt/opt/kgamer/apps/terminal.desktop << 'EOF' > /dev/null
-[Desktop Entry]
-Name=Terminal
-Comment=System Command Line
-Exec=bash
-Icon=utilities-terminal
-Terminal=true
-Type=Application
-Categories=Application;
-EOF
-
-          sudo tee mnt/opt/kgamer/apps/chromium.desktop << 'EOF' > /dev/null
-[Desktop Entry]
-Name=Chromium Browser
-Comment=Web Browser
-Exec=chromium --no-sandbox
-Icon=web-browser
-Terminal=false
-Type=Application
-Categories=Network;
-EOF
-
-          sudo tee mnt/opt/kgamer/apps/pcmanfm.desktop << 'EOF' > /dev/null
-[Desktop Entry]
-Name=File Manager (PCManFM)
-Comment=Browse Files
-Exec=pcmanfm
-Icon=system-file-manager
-Terminal=false
-Type=Application
-Categories=System;
-EOF
-
-          sudo cp -f mnt/opt/kgamer/apps/*.desktop mnt/opt/kgamer/backup_apps/ 2>/dev/null || true
-          sudo ln -sf /opt/kgamer/apps/terminal.desktop mnt/home/kgamer/RetroPie/roms/apps/
-          sudo ln -sf /opt/kgamer/apps/chromium.desktop mnt/home/kgamer/RetroPie/roms/apps/
-          sudo ln -sf /opt/kgamer/apps/pcmanfm.desktop mnt/home/kgamer/RetroPie/roms/apps/
-
-          # EmulationStation es_systems.cfg
           sudo mkdir -p mnt/etc/emulationstation
-          sudo tee mnt/etc/emulationstation/es_systems.cfg << 'EOF' > /dev/null
-<systemList>
-  <system>
-    <name>kgamer-games</name>
-    <fullname>KGAMER GAMES</fullname>
-    <path>/home/kgamer/RetroPie/roms/kgamer-games</path>
-    <extension>.sh .SH .desktop .DESKTOP</extension>
-    <command>%ROM%</command>
-    <platform>pc</platform>
-    <theme>kgamer-games</theme>
-  </system>
-  <system>
-    <name>games</name>
-    <fullname>GAMES</fullname>
-    <path>/home/kgamer/RetroPie/roms/games</path>
-    <extension>.sh .SH .bin .elf .zip .ZIP .desktop .DESKTOP</extension>
-    <command>%ROM%</command>
-    <platform>pc</platform>
-    <theme>games</theme>
-  </system>
-  <system>
-    <name>apps</name>
-    <fullname>UYGULAMALAR (APPS)</fullname>
-    <path>/home/kgamer/RetroPie/roms/apps</path>
-    <extension>.desktop .DESKTOP .sh .SH</extension>
-    <command>gtk-launch $(basename %ROM% .desktop) || %ROM%</command>
-    <platform>pc</platform>
-    <theme>ports</theme>
-  </system>
-</systemList>
-EOF
 
-          # --- KGAMER SETUP SCRIPT (/opt/kgamer/kgamer-setup.sh) ---
-          sudo tee mnt/opt/kgamer/kgamer-setup.sh << 'EOF' > /dev/null
+          # 1. KGAMER Control Center Script Dosyası (Harici oluşturulup mnt içine taşınıyor)
+          cat << 'EOF' > kgamer-setup.sh
 #!/bin/bash
 if [ "$EUID" -ne 0 ]; then
   exit 1
@@ -357,10 +236,122 @@ while true; do
     esac
 done
 EOF
+
+          sudo cp kgamer-setup.sh mnt/opt/kgamer/kgamer-setup.sh
           sudo chmod +x mnt/opt/kgamer/kgamer-setup.sh
 
-          # --- SYSTEMD SERVİSİ ---
-          sudo tee mnt/etc/systemd/system/kgamer-setup.service << 'EOF' > /dev/null
+          # 2. EmulationStation Menü Bağlantıları ve Başlatıcılar
+          cat << 'EOF' > KGAMER-CONTROL-CENTER.sh
+#!/bin/bash
+/opt/kgamer/kgamer-setup.sh
+EOF
+          sudo cp KGAMER-CONTROL-CENTER.sh mnt/home/kgamer/RetroPie/roms/kgamer-games/KGAMER-CONTROL-CENTER.sh
+          sudo chmod +x mnt/home/kgamer/RetroPie/roms/kgamer-games/KGAMER-CONTROL-CENTER.sh
+
+          cat << 'EOF' > KGAMER.desktop
+[Desktop Entry]
+Type=Application
+Name=KGAMER GAMEBOX
+Comment=KGAMER Retro Gamer Operating System Launcher
+Exec=/opt/kgamer/kgamer-setup.sh
+Icon=gamepad
+Terminal=true
+Categories=Game;
+EOF
+          sudo cp KGAMER.desktop mnt/home/kgamer/RetroPie/roms/kgamer-games/KGAMER.desktop
+          sudo chmod +x mnt/home/kgamer/RetroPie/roms/kgamer-games/KGAMER.desktop
+
+          cat << 'EOF' > Bee-Gold-Collector.desktop
+[Desktop Entry]
+Type=Application
+Name=Bee Gold Collector Hero Edition
+Comment=Bee Gold Collector Game
+Exec=bee-gold-collector
+Icon=gamepad
+Terminal=false
+Categories=Game;
+EOF
+          sudo cp Bee-Gold-Collector.desktop mnt/home/kgamer/RetroPie/roms/games/Bee-Gold-Collector.desktop
+          sudo chmod +x mnt/home/kgamer/RetroPie/roms/games/Bee-Gold-Collector.desktop
+
+          # 3. Uygulamalar .desktop dosyaları
+          cat << 'EOF' > terminal.desktop
+[Desktop Entry]
+Name=Terminal
+Comment=System Command Line
+Exec=bash
+Icon=utilities-terminal
+Terminal=true
+Type=Application
+Categories=Application;
+EOF
+          sudo cp terminal.desktop mnt/opt/kgamer/apps/
+
+          cat << 'EOF' > chromium.desktop
+[Desktop Entry]
+Name=Chromium Browser
+Comment=Web Browser
+Exec=chromium --no-sandbox
+Icon=web-browser
+Terminal=false
+Type=Application
+Categories=Network;
+EOF
+          sudo cp chromium.desktop mnt/opt/kgamer/apps/
+
+          cat << 'EOF' > pcmanfm.desktop
+[Desktop Entry]
+Name=File Manager (PCManFM)
+Comment=Browse Files
+Exec=pcmanfm
+Icon=system-file-manager
+Terminal=false
+Type=Application
+Categories=System;
+EOF
+          sudo cp pcmanfm.desktop mnt/opt/kgamer/apps/
+
+          sudo cp -f mnt/opt/kgamer/apps/*.desktop mnt/opt/kgamer/backup_apps/ 2>/dev/null || true
+          sudo ln -sf /opt/kgamer/apps/terminal.desktop mnt/home/kgamer/RetroPie/roms/apps/
+          sudo ln -sf /opt/kgamer/apps/chromium.desktop mnt/home/kgamer/RetroPie/roms/apps/
+          sudo ln -sf /opt/kgamer/apps/pcmanfm.desktop mnt/home/kgamer/RetroPie/roms/apps/
+
+          # 4. es_systems.cfg
+          cat << 'EOF' > es_systems.cfg
+<systemList>
+  <system>
+    <name>kgamer-games</name>
+    <fullname>KGAMER GAMES</fullname>
+    <path>/home/kgamer/RetroPie/roms/kgamer-games</path>
+    <extension>.sh .SH .desktop .DESKTOP</extension>
+    <command>%ROM%</command>
+    <platform>pc</platform>
+    <theme>kgamer-games</theme>
+  </system>
+  <system>
+    <name>games</name>
+    <fullname>GAMES</fullname>
+    <path>/home/kgamer/RetroPie/roms/games</path>
+    <extension>.sh .SH .bin .elf .zip .ZIP .desktop .DESKTOP</extension>
+    <command>%ROM%</command>
+    <platform>pc</platform>
+    <theme>games</theme>
+  </system>
+  <system>
+    <name>apps</name>
+    <fullname>UYGULAMALAR (APPS)</fullname>
+    <path>/home/kgamer/RetroPie/roms/apps</path>
+    <extension>.desktop .DESKTOP .sh .SH</extension>
+    <command>gtk-launch $(basename %ROM% .desktop) || %ROM%</command>
+    <platform>pc</platform>
+    <theme>ports</theme>
+  </system>
+</systemList>
+EOF
+          sudo cp es_systems.cfg mnt/etc/emulationstation/es_systems.cfg
+
+          # 5. Systemd Servisi
+          cat << 'EOF' > kgamer-setup.service
 [Unit]
 Description=KGAMER-RETROGAMER-LINUXOS First Boot Auto Setup
 After=network-online.target
@@ -375,14 +366,13 @@ TTYPath=/dev/tty1
 [Install]
 WantedBy=multi-user.target
 EOF
-
+          sudo cp kgamer-setup.service mnt/etc/systemd/system/kgamer-setup.service
           sudo chroot mnt systemctl enable kgamer-setup.service
           sudo chown -R kgamer:kgamer mnt/home/kgamer 2>/dev/null || true
 
           sudo rm -f mnt/usr/bin/qemu-aarch64-static
           sudo sync
 
-          # --- UNMOUNT ---
           sudo umount mnt/dev/pts || true
           sudo umount mnt/dev || true
           sudo umount mnt/sys || true
