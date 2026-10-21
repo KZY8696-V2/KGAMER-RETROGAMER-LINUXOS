@@ -469,7 +469,6 @@ jobs:
                   secs=$((elapsed % 60))
                   time_str=$(printf "%02d:%02d" $mins$secs)
 
-                  # Mevcut IP adresini al
                   current_ip=$(hostname -I 2>/dev/null | awk '{print $1}')
                   [ -z "$current_ip" ] && current_ip="Not Connected (No IP)"
 
@@ -482,7 +481,6 @@ jobs:
 
                   case $WIFI_ACTION in
                       1)
-                          # Wi-Fi ağlarını tara (nmcli veya iwlist)
                           wifi_list=""
                           if command -v nmcli &> /dev/null; then
                               nmcli dev wifi rescan &>/dev/null || true
@@ -517,7 +515,6 @@ jobs:
                           dialog --msgbox "Current Device IP Address:\n$current_ip" 6 40
                           ;;
                       3)
-                          # Bağlantıyı kes / Unut (Disconnect)
                           if command -v nmcli &> /dev/null; then
                               active_conn=$(nmcli -t -f NAME,TYPE connection show --active | grep wireless | cut -d: -f1)
                               if [ -n "$active_conn" ]; then
@@ -625,7 +622,6 @@ jobs:
               touch "/opt/kgamer/.keyboard_configured"
           fi
 
-          # İlk açılışta sürekli otomatik gamepad tarama modunu başlat
           scan_and_manage_gamepads
 
           while true; do
