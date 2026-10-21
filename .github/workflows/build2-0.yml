@@ -96,7 +96,8 @@ jobs:
           sudo chroot mnt bash -c "mkdir -p /home/kgamer && chown -R kgamer:kgamer /home/kgamer"
 
           sudo chroot mnt apt-get update -y || true
-          sudo chroot mnt apt-get install -y dialog git wget curl unzip xfce4-panel openbox console-setup pcmanfm chromium libpcre2-8-0 jstest-gtk joy2key xboxdrv bluetooth bluez bluez-tools network-manager wireless-tools wpasupplicant || true
+          # Chroot içinde systemd/plymouth çakışmalarını önlemek için paketleri güvenli modda kuruyoruz
+          sudo chroot mnt apt-get install -y --no-install-recommends dialog git wget curl unzip xfce4-panel openbox console-setup pcmanfm chromium libpcre2-8-0 jstest-gtk joy2key xboxdrv bluetooth bluez bluez-tools network-manager wireless-tools wpasupplicant plymouth plymouth-themes || true
           sudo chroot mnt apt-get clean
 
           # --- PLYMOUTH VE DEB PAKETİ KURULUMU ---
