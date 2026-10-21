@@ -2,12 +2,16 @@
 ​Slogan: "Gaming Console + Computer"
 
 ​🇬🇧 ENGLISH
+
 ​⚠️ IMPORTANT NOTE
+
 ​The KGAMER-RETROGAMER operating system is currently under active development, and prototypes are actively being tested. It will be released very soon!
 ​
 📌 About The Project
 ​KGAMER-RETROGAMER is a Raspberry Pi OS Bookworm-based retro gaming console and desktop operating system. It eliminates the need to choose between a retro gaming console and a personal desktop PC, allowing you to instantly access retro game emulators or seamlessly switch to a fully-featured Linux desktop environment for your daily office tasks from a single SD card or USB drive.
-​✨ Features
+​
+✨ Features
+
 ​🎮 Gaming Mode
 ​Bookworm Graphics Optimization: Low-latency video and audio performance via Wayland and PipeWire integration.
 ​Wide Emulator Support: Powered by RetroArch for NES, SNES, PS1, PSP, N64, Sega, Arcade, and more.
