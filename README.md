@@ -44,6 +44,7 @@
 ​🇹🇷 TÜRKÇE
 ​
 ⚠️ ÖNEMLİ NOT
+
 ​KGAMER-RETROGAMER işletim sistemi şu anda aktif geliştirme aşamasındadır ve prototipler aktif olarak test edilmektedir. Çok yakında yayınlanacaktır!
 ​
 📌 Proje Hakkında
