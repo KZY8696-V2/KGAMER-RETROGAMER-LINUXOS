@@ -22,8 +22,12 @@ Bookworm Graphics Optimization: Low-latency video and audio performance via Wayl
 
 ​### 💼 Office Mode
 ​Lightweight Desktop: Fast, responsive desktop environment optimized on Raspberry Pi OS Bookworm.
-​Office Suite & Media: Pre-installed LibreOffice, Chromium browser, YouTube playback support, and VLC media player.
-​
+​Office Suite & Media: Pre-installed Chromium browser,PCMANFM.
+​You can install additional applications using the apt install exampleapp command. (ROOT REQUIRED)
+
+## Alternatively, to install applications, ## the command "sudo apt install
+## exampleapp" can be used. (SUDO REQUIRED)
+
 ### 🖥️ Compatible Raspberry Pi Models 
 (Bookworm & Zero Series)
 ​KGAMER-RETROGAMER supports all Raspberry Pi models capable of running Raspberry Pi OS Bookworm:
@@ -62,7 +66,13 @@ Bookworm Graphics Optimization: Low-latency video and audio performance via Wayl
 ​
 ### 💼 Ofis Modu
 ​Hafif Masaüstü: Raspberry Pi OS Bookworm üzerinde optimize edilmiş hızlı ve duyarlı masaüstü ortamı.
-​Ofis Paketi ve Medya: Önceden yüklenmiş LibreOffice, Chromium tarayıcı, YouTube oynatma desteği ve VLC medya oynatıcı.
+​Ofis Paketi ve Medya: Önceden yüklenmiş LibreOffice, Chromium tarayıcı. 
+Ek uygulamaları apt install ornekuygulama
+(ROOT GEREKLIDIR)
+
+## Alternatif Yöntem.                     ## sudo apt install ornekuygulama 
+## komutunu kullanarak kurabilirsiniz 
+## (SUDO GEREKLIDIR).
 
 ​### 🖥️ Uyumlu Raspberry Pi Modelleri (Bookworm ve Zero Serisi)
 ​KGAMER-RETROGAMER, Raspberry Pi OS Bookworm çalıştırabilen tüm Raspberry Pi modellerini destekler:
