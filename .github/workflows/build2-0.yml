@@ -69,8 +69,8 @@ jobs:
           sudo mkdir -p mnt/boot/firmware
           sudo mount "$BOOT_PART" mnt/boot/firmware
 
-          # --- RASPBERRY PI RESMİ FIRMWARE VE DTB DOSYALARINI GÜVENLİ İNDİRME ---
-          echo "=== Raspberry Pi resmi firmware ve DTB dosyaları root yetkisiyle kopyalanıyor ==="
+          # --- RASPBERRY PI RESMİ FIRMWARE VE DTB DOSYALARINI GÜVENLİ İNDİRME (RETRIABLE) ---
+          echo "=== Raspberry Pi resmi firmware ve DTB dosyaları güvenli şekilde indiriliyor ==="
           sudo mkdir -p /tmp/rpi-firmware
           wget --tries=5 --timeout=30 -qO- https://github.com/raspberrypi/firmware/archive/refs/heads/master.tar.gz | sudo tar -xz -C /tmp/rpi-firmware --strip-components=1 || {
               echo "Uyarı: Birinci indirme denemesi başarısız, alternatif curl deneniyor..."
@@ -119,7 +119,6 @@ jobs:
           sudo mkdir -p mnt/tmp/debs
           if ls *.deb 1> /dev/null 2>&1; then
               sudo cp *.deb mnt/tmp/debs/ || true
-              # Yalnızca uyumlu oyun deb paketini kuruyoruz, glibc uyuşmazlığı yaratacak harici plymouth deb'lerini atlıyoruz
               sudo chroot mnt bash -c "dpkg -i /tmp/debs/bee-gold-collector*.deb 2>/dev/null || true"
               sudo chroot mnt apt-get install -f -y || true
               sudo rm -rf mnt/tmp/debs
