@@ -12,7 +12,8 @@
 ​
 ### ✨ Features
 
-### ​ 🎮 Gaming Mode 
+### ​ 🎮 Gaming Mode
+
 Bookworm Graphics Optimization: Low-latency video and audio performance via Wayland and PipeWire integration.
 ​Wide Emulator Support: Powered by RetroArch for NES, SNES, PS1, PSP, N64, Sega, Arcade, and more.
 ## ​Gamepad Support: ⚠️ Gamepad/controller support is currently NOT available.Controls are keyboard/mouse only for early builds. Gamepad support will be added in future updates.
