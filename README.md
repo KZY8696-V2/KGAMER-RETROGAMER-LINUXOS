@@ -25,8 +25,7 @@ Bookworm Graphics Optimization: Low-latency video and audio performance via Wayl
 ​Office Suite & Media: Pre-installed Chromium browser,PCMANFM.
 ​You can install additional applications using the apt install exampleapp command. (ROOT REQUIRED)
 
-## Alternatively, to install applications, ## the command "sudo apt install
-## exampleapp" can be used. (SUDO REQUIRED)
+## Alternatively, to install applications the command sudo apt install exampleapp can be used. (SUDO REQUIRED)
 
 ### 🖥️ Compatible Raspberry Pi Models 
 (Bookworm & Zero Series)
@@ -70,9 +69,9 @@ Bookworm Graphics Optimization: Low-latency video and audio performance via Wayl
 Ek uygulamaları apt install ornekuygulama
 (ROOT GEREKLIDIR)
 
-## Alternatif Yöntem.                     ## sudo apt install ornekuygulama 
-## komutunu kullanarak kurabilirsiniz 
-## (SUDO GEREKLIDIR).
+### Alternatif Yöntem.  
+
+## sudo apt install ornekuygulama komutunu kullanarak kurabilirsiniz (SUDO GEREKLIDIR)
 
 ​### 🖥️ Uyumlu Raspberry Pi Modelleri (Bookworm ve Zero Serisi)
 ​KGAMER-RETROGAMER, Raspberry Pi OS Bookworm çalıştırabilen tüm Raspberry Pi modellerini destekler:
