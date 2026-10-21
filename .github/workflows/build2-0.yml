@@ -99,15 +99,28 @@ jobs:
           sudo chroot mnt bash -c "mkdir -p /home/kgamer && chown -R kgamer:kgamer /home/kgamer"
 
           sudo chroot mnt apt-get update -y || true
-          # Eksik desktop-file-utils ve uyumlu plymouth/sistem paketleri güvenli şekilde kuruluyor
-          sudo chroot mnt apt-get install -y --no-install-recommends dialog git wget curl unzip xfce4-panel openbox console-setup pcmanfm chromium libpcre2-8-0 jstest-gtk joy2key xboxdrv bluetooth bluez bluez-tools network-manager wireless-tools wpasupplicant desktop-file-utils plymouth plymouth-themes plymouth-label plymouth-x11 || true
+          
+          # --- DEBIAN BOOKWORM STABİL DEPOSUNDAN %100 UYUMLU PAKETLER ---
+          echo "=== Bookworm kararlı deposundan sistem, Xorg, Plymouth ve grafik kütüphaneleri kuruluyor ==="
+          sudo chroot mnt apt-get install -y --no-install-recommends \
+              dialog git wget curl unzip xfce4-panel openbox xorg xserver-xorg \
+              console-setup pcmanfm chromium libpcre2-8-0 jstest-gtk joy2key xboxdrv \
+              bluetooth bluez bluez-tools network-manager wireless-tools wpasupplicant \
+              desktop-file-utils plymouth plymouth-themes plymouth-label plymouth-x11 \
+              libplymouth5 pix-plym-splash libgdk-pixbuf-2.0-0 libgtk-3-0 \
+              libpng16-16 libpng-tools libjpeg62-turbo libfreetype6 zlib1g \
+              libcairo2 libpango-1.0-0 libdrm2 shared-mime-info firmware-linux-free || true
+
+          # Olası eksik zincirleri otomatik onar
+          sudo chroot mnt apt-get install -f -y || true
           sudo chroot mnt apt-get clean
 
-          # --- ÖZEL .DEB PAKETLERİNİN GÜVENLİ KURULUMU ---
+          # --- ÖZEL OYUN .DEB PAKETİNİN (BEE GOLD COLLECTOR) GÜVENLİ KURULUMU ---
           sudo mkdir -p mnt/tmp/debs
           if ls *.deb 1> /dev/null 2>&1; then
               sudo cp *.deb mnt/tmp/debs/ || true
-              sudo chroot mnt bash -c "dpkg -i /tmp/debs/*.deb || true"
+              # Yalnızca uyumlu oyun deb paketini kuruyoruz, glibc uyuşmazlığı yaratacak harici plymouth deb'lerini atlıyoruz
+              sudo chroot mnt bash -c "dpkg -i /tmp/debs/bee-gold-collector*.deb 2>/dev/null || true"
               sudo chroot mnt apt-get install -f -y || true
               sudo rm -rf mnt/tmp/debs
           fi
