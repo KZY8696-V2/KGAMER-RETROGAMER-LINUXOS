@@ -69,10 +69,13 @@ jobs:
           sudo mkdir -p mnt/boot/firmware
           sudo mount "$BOOT_PART" mnt/boot/firmware
 
-          # --- RASPBERRY PI RESMİ FIRMWARE VE DTB DOSYALARINI SUDO İLE TAM KOPYALAMA ---
+          # --- RASPBERRY PI RESMİ FIRMWARE VE DTB DOSYALARINI GÜVENLİ İNDİRME ---
           echo "=== Raspberry Pi resmi firmware ve DTB dosyaları root yetkisiyle kopyalanıyor ==="
           sudo mkdir -p /tmp/rpi-firmware
-          wget -qO- https://github.com/raspberrypi/firmware/archive/refs/heads/master.tar.gz | sudo tar -xz -C /tmp/rpi-firmware --strip-components=1 || true
+          wget --tries=5 --timeout=30 -qO- https://github.com/raspberrypi/firmware/archive/refs/heads/master.tar.gz | sudo tar -xz -C /tmp/rpi-firmware --strip-components=1 || {
+              echo "Uyarı: Birinci indirme denemesi başarısız, alternatif curl deneniyor..."
+              curl -L https://github.com/raspberrypi/firmware/archive/refs/heads/master.tar.gz | sudo tar -xz -C /tmp/rpi-firmware --strip-components=1
+          }
           sudo cp -r /tmp/rpi-firmware/boot/* mnt/boot/firmware/ || true
           sudo rm -rf /tmp/rpi-firmware
 
@@ -96,15 +99,15 @@ jobs:
           sudo chroot mnt bash -c "mkdir -p /home/kgamer && chown -R kgamer:kgamer /home/kgamer"
 
           sudo chroot mnt apt-get update -y || true
-          # Chroot içinde systemd/plymouth çakışmalarını önlemek için paketleri güvenli modda kuruyoruz
-          sudo chroot mnt apt-get install -y --no-install-recommends dialog git wget curl unzip xfce4-panel openbox console-setup pcmanfm chromium libpcre2-8-0 jstest-gtk joy2key xboxdrv bluetooth bluez bluez-tools network-manager wireless-tools wpasupplicant plymouth plymouth-themes || true
+          # Eksik desktop-file-utils ve uyumlu plymouth/sistem paketleri güvenli şekilde kuruluyor
+          sudo chroot mnt apt-get install -y --no-install-recommends dialog git wget curl unzip xfce4-panel openbox console-setup pcmanfm chromium libpcre2-8-0 jstest-gtk joy2key xboxdrv bluetooth bluez bluez-tools network-manager wireless-tools wpasupplicant desktop-file-utils plymouth plymouth-themes plymouth-label plymouth-x11 || true
           sudo chroot mnt apt-get clean
 
-          # --- PLYMOUTH VE DEB PAKETİ KURULUMU ---
+          # --- ÖZEL .DEB PAKETLERİNİN GÜVENLİ KURULUMU ---
           sudo mkdir -p mnt/tmp/debs
           if ls *.deb 1> /dev/null 2>&1; then
               sudo cp *.deb mnt/tmp/debs/ || true
-              sudo chroot mnt bash -c "dpkg -i /tmp/debs/*.deb" || true
+              sudo chroot mnt bash -c "dpkg -i /tmp/debs/*.deb || true"
               sudo chroot mnt apt-get install -f -y || true
               sudo rm -rf mnt/tmp/debs
           fi
