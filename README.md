@@ -82,9 +82,14 @@ Ek uygulamaları apt install ornekuygulama
 ​Raspberry Pi Zero 2 W
 
 ### ​📥 Kurulum Rehberi (Raspberry Pi Imager)
+
 ​Raspberry Pi Imager programını indirin ve açın.
+
 ​[ CHOOSE DEVICE ] kısmından cihazınızı seçin.
+
 ​[ CHOOSE OS ] ➔ En alta inip Use Custom (Özel Kullan) seçeneği ile .img dosyanızı gösterin.
+
 ​[ CHOOSE STORAGE ] ile SD kartınızı veya USB belleğinizi seçin.
+
 ​[ WRITE ] (Yaz) butonuna tıklayın.
 ​Önemli Not: İmaj dosyasının (.img) içerisinde zaten hazır bir kullanıcı hesabı gömülü olduğu için, Raspberry Pi Imager'ın sunduğu özelleştirme penceresi geldiğinde "No" (Hayır) diyerek / "Onu atla" seçeneğini kullanarak bu pencereyi geçin.
