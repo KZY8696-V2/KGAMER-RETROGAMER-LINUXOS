@@ -12,6 +12,19 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
+      - name: Clean Up Last 10 Failed Workflow Runs
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "Checking and cleaning up to 10 oldest failed workflow runs..."
+          REPO="${{ github.repository }}"
+          
+          for run_id in $(gh api repos/$REPO/actions/runs --jq '.workflow_runs[] | select(.conclusion == "failure") | .id' | tail -n 10); do
+              echo "Deleting failed run ID: $run_id"
+              gh api --method DELETE repos/$REPO/actions/runs/$run_id || true
+          done
+          echo "Failed runs cleanup completed."
+
       - name: Install Image Building Dependencies
         run: |
           sudo rm -f /etc/apt/sources.list.d/microsoft*
@@ -56,11 +69,11 @@ jobs:
           sudo mkdir -p mnt/boot/firmware
           sudo mount "$BOOT_PART" mnt/boot/firmware
 
-          # --- RASPBERRY PI OFFICIAL FIRMWARE VE DTB DOSYALARINI OTOMATİK KURMA ---
-          echo "=== Raspberry Pi resmi firmware ve DTB dosyaları kopyalanıyor ==="
+          # --- RASPBERRY PI RESMİ FIRMWARE VE DTB DOSYALARINI SUDO İLE TAM KOPYALAMA ---
+          echo "=== Raspberry Pi resmi firmware ve DTB dosyaları root yetkisiyle kopyalanıyor ==="
           sudo mkdir -p /tmp/rpi-firmware
-          wget -qO- https://github.com/raspberrypi/firmware/archive/refs/heads/master.tar.gz | tar -xz -C /tmp/rpi-firmware --strip-components=1
-          sudo cp -r /tmp/rpi-firmware/boot/* mnt/boot/firmware/
+          wget -qO- https://github.com/raspberrypi/firmware/archive/refs/heads/master.tar.gz | sudo tar -xz -C /tmp/rpi-firmware --strip-components=1 || true
+          sudo cp -r /tmp/rpi-firmware/boot/* mnt/boot/firmware/ || true
           sudo rm -rf /tmp/rpi-firmware
 
           sudo mount -t proc proc mnt/proc
@@ -89,14 +102,14 @@ jobs:
           # --- PLYMOUTH VE DEB PAKETİ KURULUMU ---
           sudo mkdir -p mnt/tmp/debs
           if ls *.deb 1> /dev/null 2>&1; then
-              sudo cp *.deb mnt/tmp/debs/
+              sudo cp *.deb mnt/tmp/debs/ || true
               sudo chroot mnt bash -c "dpkg -i /tmp/debs/*.deb" || true
               sudo chroot mnt apt-get install -f -y || true
               sudo rm -rf mnt/tmp/debs
           fi
 
-          # --- PLYMOUTH ÖZEL AÇILIŞ TEMASI (frame_0001 - frame_0150) ---
-          sudo mkdir -p mnt/usr/share/plymouth/themes/retrogamer-boot
+          # --- PLYMOUTH ÖZEL AÇILIŞ TEMASI (SUDO KORUMALI) ---
+          sudo mkdir -p mnt/usr/share/plymouth/themes/retrogamer-boot || true
 
           if [ -d "frames" ]; then
               sudo cp frames/frame_*.png mnt/usr/share/plymouth/themes/retrogamer-boot/ 2>/dev/null || true
@@ -146,8 +159,8 @@ jobs:
           sudo chroot mnt plymouth-set-default-theme -R retrogamer-boot || true
 
           if [ -f mnt/boot/firmware/cmdline.txt ]; then
-              sudo sed -i 's/console=serial0,115200//g' mnt/boot/firmware/cmdline.txt
-              sudo sed -i 's/quiet/quiet splash plymouth.ignore-serial-consoles logo.nologo vt.handoff=7/g' mnt/boot/firmware/cmdline.txt
+              sudo sed -i 's/console=serial0,115200//g' mnt/boot/firmware/cmdline.txt || true
+              sudo sed -i 's/quiet/quiet splash plymouth.ignore-serial-consoles logo.nologo vt.handoff=7/g' mnt/boot/firmware/cmdline.txt || true
           fi
 
           # RetroPie Kurulumu
@@ -166,14 +179,17 @@ jobs:
           ./retropie_packages.sh retroarch install < /dev/null || true
           ' || true
 
-          # --- GAMEPAD YARDIMCI SCRİPTİ (`gamepad-helper.sh`) ---
+          # --- DOĞAL VE OTOMATİK GAMEPAD/KLAVYE DESTEĞİ ---
           sudo mkdir -p mnt/opt/kgamer
           sudo tee mnt/opt/kgamer/gamepad-helper.sh << 'EOF' > /dev/null
           #!/bin/bash
+          if pgrep -x "joy2key" > /dev/null; then
+              exit 0
+          fi
           if [ -e /dev/input/js0 ]; then
-              joy2key -dev /dev/input/js0 -alt -config &>/dev/null &
+              joy2key -dev /dev/input/js0 -alt &>/dev/null &
           elif [ -e /dev/input/js1 ]; then
-              joy2key -dev /dev/input/js1 -alt -config &>/dev/null &
+              joy2key -dev /dev/input/js1 -alt &>/dev/null &
           fi
           EOF
           sudo chmod +x mnt/opt/kgamer/gamepad-helper.sh
@@ -258,7 +274,7 @@ jobs:
               dialog_args+=("$desktop_name" "$app_title" "$status")
           done
 
-          CHOICES=$(dialog --clear --title "RETROGAMER - APPS VISIBILITY FILTER (🎮 Gamepad Supported)" \
+          CHOICES=$(dialog --clear --title "RETROGAMER - APPS VISIBILITY FILTER (🎮/⌨️ Supported)" \
               --checklist "Select applications to show in EmulationStation APPS menu:" 22 70 12 \
               "${dialog_args[@]}" 3>&1 1>&2 2>&3)
 
@@ -348,7 +364,7 @@ jobs:
 
           configure_keyboard_layout() {
               /opt/kgamer/gamepad-helper.sh
-              KB_CHOICE=$(dialog --clear --title "RETROGAMER - KEYBOARD & LANGUAGE SELECTOR (🎮 Gamepad Supported)" \
+              KB_CHOICE=$(dialog --clear --title "RETROGAMER - KEYBOARD & LANGUAGE SELECTOR (🎮/⌨️ Supported)" \
                   --menu "Select your keyboard layout / country:" 20 65 11 \
                   "us" "English (US) - Standard QWERTY" \
                   "uk" "English (UK)" \
@@ -362,7 +378,7 @@ jobs:
                   "other" "Other Layout (Manual Code)" 3>&1 1>&2 2>&3)
 
               if [ "$KB_CHOICE" = "tr" ]; then
-                  TR_VARIANT=$(dialog --clear --title "TURKISH KEYBOARD VARIANT (🎮 Gamepad Supported)" \
+                  TR_VARIANT=$(dialog --clear --title "TURKISH KEYBOARD VARIANT (🎮/⌨️ Supported)" \
                       --menu "Select Turkish keyboard type:" 10 50 2 \
                       "q" "Turkish Q Klavye" \
                       "f" "Turkish F Klavye" 3>&1 1>&2 2>&3)
@@ -400,7 +416,7 @@ jobs:
                   elapsed=$((current_time - start_time))
                   mins=$((elapsed / 60))
                   secs=$((elapsed % 60))
-                  time_str=$(printf "%02d:%02d" $mins$secs)
+                  time_str=$(printf "%02d:%02d" $mins $secs)
 
                   found_pads=""
                   index=1
@@ -408,7 +424,7 @@ jobs:
                   for js in /dev/input/js*; do
                       if [ -e "$js" ]; then
                           pad_name=$(cat /sys/class/input/$(basename $js)/device/name 2>/dev/null || echo "Gamepad $index")
-                          found_pads="$found_pads$index \"$pad_name ($js)\" ON"
+                          found_pads="$found_pads $index \"$pad_name ($js)\" ON"
                           pad_paths[$index]="$js"
                           index=$((index + 1))
                       fi
@@ -631,8 +647,8 @@ jobs:
               fi
 
               /opt/kgamer/gamepad-helper.sh
-              CHOICE=$(dialog --clear --title "RETROGAMER CONTROL CENTER (🎮 Gamepad Supported)" \
-                  --menu "Select action (Use D-Pad/Stick & A/Cross):" 20 65 9 \
+              CHOICE=$(dialog --clear --title "RETROGAMER CONTROL CENTER (🎮/⌨️ Supported)" \
+                  --menu "Select action (Use Arrows & Enter/ESC):" 20 65 9 \
                   "1" "RETURN TO EMULATION STATION" \
                   "2" "Open GUI Desktop (Openbox & XFCE Panel)" \
                   "3" "Change Keyboard Layout & Language" \
