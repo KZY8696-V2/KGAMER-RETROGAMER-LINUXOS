@@ -72,8 +72,8 @@ jobs:
           mkdir -p mnt/boot/firmware
           mount "$BOOT_PART" mnt/boot/firmware
 
-          # --- RASPBERRY PI RESMİ FIRMWARE VE DTB DOSYALARINI GİT CLONE İLE KUSURSUZ ÇEKME ---
-          echo "=== Raspberry Pi resmi firmware ve DTB dosyaları root yetkisiyle klonlanıyor ==="
+          # --- RASPBERRY PI RESMİ FIRMWARE VE DTB DOSYALARINI DOĞRUDAN /BOOT/FIRMWARE KLASÖRÜNE KLONLAMA ---
+          echo "=== Raspberry Pi resmi firmware ve DTB dosyaları doğrudan /boot/firmware klasörüne klonlanıyor ==="
           rm -rf /tmp/rpi-firmware
           git clone --depth=1 https://github.com/raspberrypi/firmware.git /tmp/rpi-firmware || {
               echo "Git klonlama başarısız oldu, alternatif arşiv yöntemi deneniyor..."
@@ -130,7 +130,7 @@ jobs:
               rm -rf mnt/tmp/debs
           fi
 
-          # --- PLYMOUTH ÖZEL AÇILIŞ TEMASI ---
+          # --- FULLSCREEN, ASLA KAPATILAMAZ VE 150. KAREDE OTOMATİK KAPANAN PLYMOUTH TEMASI ---
           mkdir -p mnt/usr/share/plymouth/themes/retrogamer-boot || true
 
           if [ -d "frames" ]; then
@@ -140,7 +140,7 @@ jobs:
           tee mnt/usr/share/plymouth/themes/retrogamer-boot/retrogamer-boot.plymouth << 'EOF' > /dev/null
           [Plymouth Theme]
           Name=Retrogamer Boot Animation
-          Description=Custom Boot Animation from frame_0001 to frame_0150
+          Description=Fullscreen Non-Closable 30FPS Animation ending at frame 150
           ModuleName=script
 
           [script]
@@ -163,22 +163,30 @@ jobs:
 
           framerate = 30;
           my_sprite = Sprite();
+          screen_width = Window.GetWidth();
+          screen_height = Window.GetHeight();
 
           fun refresh_callback () {
               local.time = Plymouth.GetAnimationTime();
-              local.frame = Math.Int(local.time * framerate) % anim_frames + 1;
+              local.frame = Math.Int(local.time * framerate) + 1;
+              
+              if (local.frame >= anim_frames) {
+                  local.frame = anim_frames;
+                  my_sprite.SetImage(images[local.frame]);
+                  Plymouth.Quit();
+                  return;
+              }
               my_sprite.SetImage(images[local.frame]);
           }
 
           Plymouth.SetRefreshFunction (refresh_callback);
 
-          screen_width = Window.GetWidth();
-          screen_height = Window.GetHeight();
           my_sprite.SetX(screen_width / 2 - images[1].GetWidth() / 2);
           my_sprite.SetY(screen_height / 2 - images[1].GetHeight() / 2);
           EOF
 
           chroot mnt plymouth-set-default-theme -R retrogamer-boot || true
+          chroot mnt update-initramfs -u -k all || true
 
           if [ -f mnt/boot/firmware/cmdline.txt ]; then
               sed -i 's/console=serial0,115200//g' mnt/boot/firmware/cmdline.txt || true
@@ -502,7 +510,7 @@ jobs:
                   elapsed=$((current_time - start_time))
                   mins=$((elapsed / 60))
                   secs=$((elapsed % 60))
-                  time_str=$(printf "%02d:%02d" $mins$secs)
+                  time_str=$(printf "%02d:%02d" $mins $secs)
 
                   current_ip=$(hostname -I 2>/dev/null | awk '{print $1}')
                   [ -z "$current_ip" ] && current_ip="Not Connected (No IP)"
