@@ -110,7 +110,7 @@ jobs:
           # --- DEBIAN BOOKWORM STABİL DEPOSUNDAN %100 UYUMLU PAKETLER ---
           echo "=== Bookworm kararlı deposundan sistem, Xorg, Plymouth ve grafik kütüphaneleri kuruluyor ==="
           chroot mnt apt-get install -y --no-install-recommends \
-              dialog git wget curl unzip xfce4-panel openbox xorg xserver-xorg \
+              dialog git wget curl unzip xfce4-panel xfce4-terminal openbox xorg xserver-xorg \
               console-setup pcmanfm chromium libpcre2-8-0 jstest-gtk joy2key xboxdrv \
               bluetooth bluez bluez-tools network-manager wireless-tools wpasupplicant \
               desktop-file-utils plymouth plymouth-themes plymouth-label plymouth-x11 \
