@@ -8,6 +8,7 @@ on:
 jobs:
   build-rpi-image:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
@@ -16,6 +17,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          [[ $EUID -ne 0 ]] && exec sudo /bin/bash "$0" "$@"
           echo "Checking and cleaning up to 10 oldest failed workflow runs..."
           REPO="${{ github.repository }}"
           
@@ -27,15 +29,17 @@ jobs:
 
       - name: Install Image Building Dependencies
         run: |
-          sudo rm -f /etc/apt/sources.list.d/microsoft*
-          sudo rm -f /etc/apt/trusted.gpg.d/microsoft*
+          [[ $EUID -ne 0 ]] && exec sudo /bin/bash "$0" "$@"
+          rm -f /etc/apt/sources.list.d/microsoft*
+          rm -f /etc/apt/trusted.gpg.d/microsoft*
 
-          sudo apt-get update
-          sudo apt-get install -y parted kpartx qemu-user-static wget curl unzip zip dosfstools exfat-fuse exfatprogs console-data e2fsprogs jstest-gtk joy2key xboxdrv
+          apt-get update
+          apt-get install -y parted kpartx qemu-user-static wget curl unzip zip dosfstools exfat-fuse exfatprogs console-data e2fsprogs jstest-gtk joy2key xboxdrv git
 
       - name: Build and Embed into Raspberry Pi Lite Image
         run: |
-          echo "=== RETROGAMER .IMG BUILD STARTED ==="
+          [[ $EUID -ne 0 ]] && exec sudo /bin/bash "$0" "$@"
+          echo "=== RETROGAMER .IMG BUILD STARTED (ROOT PRIVILEGES LOCKED) ==="
 
           IMG_URL="https://downloads.raspberrypi.org/raspios_lite_arm64/images/raspios_lite_arm64-2024-03-15/2024-03-15-raspios-bookworm-arm64-lite.img.xz"
           
@@ -53,57 +57,75 @@ jobs:
 
           truncate -s +4G "$IMG_FILE"
           
-          LOOP_DEV=$(sudo losetup --find --show "$IMG_FILE")
-          sudo partx -a "$LOOP_DEV"
+          LOOP_DEV=$(losetup --find --show "$IMG_FILE")
+          partx -a "$LOOP_DEV"
           sleep 3
 
           ROOT_PART="${LOOP_DEV}p2"
           BOOT_PART="${LOOP_DEV}p1"
 
-          sudo parted -s "$LOOP_DEV" resizepart 2 100%
-          sudo e2fsck -f -p "$ROOT_PART" || true
-          sudo resize2fs "$ROOT_PART"
+          parted -s "$LOOP_DEV" resizepart 2 100%
+          e2fsck -f -p "$ROOT_PART" || true
+          resize2fs "$ROOT_PART"
           
           mkdir -p mnt
-          sudo mount "$ROOT_PART" mnt
-          sudo mkdir -p mnt/boot/firmware
-          sudo mount "$BOOT_PART" mnt/boot/firmware
+          mount "$ROOT_PART" mnt
+          mkdir -p mnt/boot/firmware
+          mount "$BOOT_PART" mnt/boot/firmware
 
-          # --- RASPBERRY PI RESMİ FIRMWARE VE DTB DOSYALARINI GÜVENLİ İNDİRME (RETRIABLE) ---
-          echo "=== Raspberry Pi resmi firmware ve DTB dosyaları güvenli şekilde indiriliyor ==="
-          sudo mkdir -p /tmp/rpi-firmware
-          wget --tries=5 --timeout=30 -qO- https://github.com/raspberrypi/firmware/archive/refs/heads/master.tar.gz | sudo tar -xz -C /tmp/rpi-firmware --strip-components=1 || {
-              echo "Uyarı: Birinci indirme denemesi başarısız, alternatif curl deneniyor..."
-              curl -L https://github.com/raspberrypi/firmware/archive/refs/heads/master.tar.gz | sudo tar -xz -C /tmp/rpi-firmware --strip-components=1
+          # --- RASPBERRY PI RESMİ FIRMWARE VE DTB DOSYALARINI DOĞRUDAN /BOOT/FIRMWARE KLASÖRÜNE KLONLAMA ---
+          echo "=== Raspberry Pi resmi firmware and DTB dosyaları doğrudan /boot/firmware klasörüne klonlanıyor ==="
+          rm -rf /tmp/rpi-firmware
+          git clone --depth=1 https://github.com/raspberrypi/firmware.git /tmp/rpi-firmware || {
+              echo "Git klonlama başarısız oldu, alternatif arşiv yöntemi deneniyor..."
+              mkdir -p /tmp/rpi-firmware
+              curl -L https://github.com/raspberrypi/firmware/archive/refs/heads/master.zip -o /tmp/firmware.zip
+              unzip -q /tmp/firmware.zip -d /tmp/
+              mv /tmp/firmware-master/* /tmp/rpi-firmware/
+              rm -f /tmp/firmware.zip
           }
-          sudo cp -r /tmp/rpi-firmware/boot/* mnt/boot/firmware/ || true
-          sudo rm -rf /tmp/rpi-firmware
+          cp -r /tmp/rpi-firmware/boot/* mnt/boot/firmware/ || true
+          rm -rf /tmp/rpi-firmware
 
-          sudo mount -t proc proc mnt/proc
-          sudo mount -t sysfs sysfs mnt/sys
-          sudo mount --bind /dev mnt/dev
-          sudo mount --bind /dev/pts mnt/dev/pts
+          # --- DİNAMİK PARTUUID ALMA VE FSTAB / CMDLINE GÜNCELLEMESİ (ÇÖZÜM) ---
+          BOOT_DEV_UUID=$(blkid -s PARTUUID -o value "$BOOT_PART")
+          ROOT_DEV_UUID=$(blkid -s PARTUUID -o value "$ROOT_PART")
 
-          sudo bash -c "echo '/dev/root / ext4 defaults,noatime 0 1' > mnt/etc/fstab"
-          sudo cp /usr/bin/qemu-aarch64-static mnt/usr/bin/
+          echo "Boot PARTUUID: $BOOT_DEV_UUID"
+          echo "Root PARTUUID: $ROOT_DEV_UUID"
 
-          sudo chroot mnt systemctl disable raspi-config 2>/dev/null || true
-          sudo chroot mnt systemctl disable firstboot 2>/dev/null || true
-          sudo chroot mnt systemctl disable resize2fs_once 2>/dev/null || true
-          sudo rm -f mnt/etc/systemd/system/sysinit.target.wants/resize2fs_once.service 2>/dev/null || true
-          sudo rm -f mnt/etc/profile.d/raspi-config.sh 2>/dev/null || true
-          sudo rm -f mnt/boot/firstrun.sh 2>/dev/null || true
+          cat << EOF > mnt/etc/fstab
+          proc            /proc           proc    defaults          0       0
+          PARTUUID=$BOOT_DEV_UUID  /boot/firmware  vfat    defaults          0       2
+          PARTUUID=$ROOT_DEV_UUID  /               ext4    defaults,noatime  0       1
+          EOF
 
-          sudo chroot mnt bash -c "id -u kgamer &>/dev/null || useradd -m -s /bin/bash -G sudo,audio,video,input,games kgamer"
-          sudo chroot mnt bash -c "echo 'kgamer:kgamer' | chpasswd"
-          sudo chroot mnt bash -c "mkdir -p /home/kgamer && chown -R kgamer:kgamer /home/kgamer"
+          echo "root=PARTUUID=$ROOT_DEV_UUID rootfstype=ext4 fsck.repair=yes rootwait quiet splash plymouth.ignore-serial-consoles logo.nologo vt.handoff=7" > mnt/boot/firmware/cmdline.txt
 
-          sudo chroot mnt apt-get update -y || true
+          mount -t proc proc mnt/proc
+          mount -t sysfs sysfs mnt/sys
+          mount --bind /dev mnt/dev
+          mount --bind /dev/pts mnt/dev/pts
+
+          cp /usr/bin/qemu-aarch64-static mnt/usr/bin/
+
+          chroot mnt systemctl disable raspi-config 2>/dev/null || true
+          chroot mnt systemctl disable firstboot 2>/dev/null || true
+          chroot mnt systemctl disable resize2fs_once 2>/dev/null || true
+          rm -f mnt/etc/systemd/system/sysinit.target.wants/resize2fs_once.service 2>/dev/null || true
+          rm -f mnt/etc/profile.d/raspi-config.sh 2>/dev/null || true
+          rm -f mnt/boot/firstrun.sh 2>/dev/null || true
+
+          chroot mnt bash -c "id -u kgamer &>/dev/null || useradd -m -s /bin/bash -G sudo,audio,video,input,games kgamer"
+          chroot mnt bash -c "echo 'kgamer:kgamer' | chpasswd"
+          chroot mnt bash -c "mkdir -p /home/kgamer && chown -R kgamer:kgamer /home/kgamer"
+
+          chroot mnt apt-get update -y || true
           
           # --- DEBIAN BOOKWORM STABİL DEPOSUNDAN %100 UYUMLU PAKETLER ---
           echo "=== Bookworm kararlı deposundan sistem, Xorg, Plymouth ve grafik kütüphaneleri kuruluyor ==="
-          sudo chroot mnt apt-get install -y --no-install-recommends \
-              dialog git wget curl unzip xfce4-panel openbox xorg xserver-xorg \
+          chroot mnt apt-get install -y --no-install-recommends \
+              dialog git wget curl unzip xfce4-panel xfce4-terminal openbox xorg xserver-xorg \
               console-setup pcmanfm chromium libpcre2-8-0 jstest-gtk joy2key xboxdrv \
               bluetooth bluez bluez-tools network-manager wireless-tools wpasupplicant \
               desktop-file-utils plymouth plymouth-themes plymouth-label plymouth-x11 \
@@ -111,30 +133,29 @@ jobs:
               libpng16-16 libpng-tools libjpeg62-turbo libfreetype6 zlib1g \
               libcairo2 libpango-1.0-0 libdrm2 shared-mime-info firmware-linux-free || true
 
-          # Olası eksik zincirleri otomatik onar
-          sudo chroot mnt apt-get install -f -y || true
-          sudo chroot mnt apt-get clean
+          chroot mnt apt-get install -f -y || true
+          chroot mnt apt-get clean
 
-          # --- ÖZEL OYUN .DEB PAKETİNİN (BEE GOLD COLLECTOR) GÜVENLİ KURULUMU ---
-          sudo mkdir -p mnt/tmp/debs
+          # --- ÖZEL OYUN .DEB PAKETİNİN (BEE GOLD COLLECTOR) KURULUMU ---
+          mkdir -p mnt/tmp/debs
           if ls *.deb 1> /dev/null 2>&1; then
-              sudo cp *.deb mnt/tmp/debs/ || true
-              sudo chroot mnt bash -c "dpkg -i /tmp/debs/bee-gold-collector*.deb 2>/dev/null || true"
-              sudo chroot mnt apt-get install -f -y || true
-              sudo rm -rf mnt/tmp/debs
+              cp *.deb mnt/tmp/debs/ || true
+              chroot mnt bash -c "dpkg -i /tmp/debs/bee-gold-collector*.deb 2>/dev/null || true"
+              chroot mnt apt-get install -f -y || true
+              rm -rf mnt/tmp/debs
           fi
 
-          # --- PLYMOUTH ÖZEL AÇILIŞ TEMASI (SUDO KORUMALI) ---
-          sudo mkdir -p mnt/usr/share/plymouth/themes/retrogamer-boot || true
+          # --- FULLSCREEN, ASLA KAPATILAMAZ VE 150. KAREDE OTOMATİK KAPANAN PLYMOUTH TEMASI ---
+          mkdir -p mnt/usr/share/plymouth/themes/retrogamer-boot || true
 
           if [ -d "frames" ]; then
-              sudo cp frames/frame_*.png mnt/usr/share/plymouth/themes/retrogamer-boot/ 2>/dev/null || true
+              cp frames/frame_*.png mnt/usr/share/plymouth/themes/retrogamer-boot/ 2>/dev/null || true
           fi
 
-          sudo tee mnt/usr/share/plymouth/themes/retrogamer-boot/retrogamer-boot.plymouth << 'EOF' > /dev/null
+          tee mnt/usr/share/plymouth/themes/retrogamer-boot/retrogamer-boot.plymouth << 'EOF' > /dev/null
           [Plymouth Theme]
           Name=Retrogamer Boot Animation
-          Description=Custom Boot Animation from frame_0001 to frame_0150
+          Description=Fullscreen Non-Closable 30FPS Animation ending at frame 150
           ModuleName=script
 
           [script]
@@ -142,7 +163,7 @@ jobs:
           ScriptFile=/usr/share/plymouth/themes/retrogamer-boot/retrogamer-boot.script
           EOF
 
-          sudo tee mnt/usr/share/plymouth/themes/retrogamer-boot/retrogamer-boot.script << 'EOF' > /dev/null
+          tee mnt/usr/share/plymouth/themes/retrogamer-boot/retrogamer-boot.script << 'EOF' > /dev/null
           anim_frames = 150;
           for (i = 1; i <= anim_frames; i++) {
               if (i < 10) {
@@ -157,30 +178,33 @@ jobs:
 
           framerate = 30;
           my_sprite = Sprite();
+          screen_width = Window.GetWidth();
+          screen_height = Window.GetHeight();
 
           fun refresh_callback () {
               local.time = Plymouth.GetAnimationTime();
-              local.frame = Math.Int(local.time * framerate) % anim_frames + 1;
+              local.frame = Math.Int(local.time * framerate) + 1;
+              
+              if (local.frame >= anim_frames) {
+                  local.frame = anim_frames;
+                  my_sprite.SetImage(images[local.frame]);
+                  Plymouth.Quit();
+                  return;
+              }
               my_sprite.SetImage(images[local.frame]);
           }
 
           Plymouth.SetRefreshFunction (refresh_callback);
 
-          screen_width = Window.GetWidth();
-          screen_height = Window.GetHeight();
           my_sprite.SetX(screen_width / 2 - images[1].GetWidth() / 2);
           my_sprite.SetY(screen_height / 2 - images[1].GetHeight() / 2);
           EOF
 
-          sudo chroot mnt plymouth-set-default-theme -R retrogamer-boot || true
-
-          if [ -f mnt/boot/firmware/cmdline.txt ]; then
-              sudo sed -i 's/console=serial0,115200//g' mnt/boot/firmware/cmdline.txt || true
-              sudo sed -i 's/quiet/quiet splash plymouth.ignore-serial-consoles logo.nologo vt.handoff=7/g' mnt/boot/firmware/cmdline.txt || true
-          fi
+          chroot mnt plymouth-set-default-theme -R retrogamer-boot || true
+          chroot mnt update-initramfs -u -k all || true
 
           # RetroPie Kurulumu
-          sudo chroot mnt bash -c '
+          chroot mnt bash -c '
           export DEBIAN_FRONTEND=noninteractive
           mkdir -p /opt/kgamer
           cd /opt/kgamer
@@ -196,8 +220,8 @@ jobs:
           ' || true
 
           # --- DOĞAL VE OTOMATİK GAMEPAD/KLAVYE DESTEĞİ ---
-          sudo mkdir -p mnt/opt/kgamer
-          sudo tee mnt/opt/kgamer/gamepad-helper.sh << 'EOF' > /dev/null
+          mkdir -p mnt/opt/kgamer
+          tee mnt/opt/kgamer/gamepad-helper.sh << 'EOF' > /dev/null
           #!/bin/bash
           if pgrep -x "joy2key" > /dev/null; then
               exit 0
@@ -208,10 +232,9 @@ jobs:
               joy2key -dev /dev/input/js1 -alt &>/dev/null &
           fi
           EOF
-          sudo chmod +x mnt/opt/kgamer/gamepad-helper.sh
+          chmod +x mnt/opt/kgamer/gamepad-helper.sh
 
-          # Gerekli Dizinler ve Başlangıç Dosyaları
-          sudo chroot mnt bash -c '
+          chroot mnt bash -c '
           export DEBIAN_FRONTEND=noninteractive
           mkdir -p /opt/kgamer/apps
           mkdir -p /opt/kgamer/backup_apps
@@ -220,13 +243,13 @@ jobs:
 
           cat << "EOF" > /opt/kgamer/apps/terminal.desktop
           [Desktop Entry]
-          Name=Terminal
-          Comment=System Command Line
-          Exec=bash
+          Name=XFCE Terminal
+          Comment=Command Line Terminal
+          Exec=xfce4-terminal
           Icon=utilities-terminal
-          Terminal=true
+          Terminal=false
           Type=Application
-          Categories=Application;
+          Categories=System;Application;
           EOF
 
           cat << "EOF" > /opt/kgamer/apps/chromium.desktop
@@ -255,8 +278,20 @@ jobs:
           chown -R kgamer:kgamer /home/kgamer/RetroPie 2>/dev/null || true
           '
 
-          # --- UYGULAMA FİLTRELEME SCRIPTİ (`app-filter.sh`) ---
-          sudo tee mnt/opt/kgamer/app-filter.sh << 'EOF' > /dev/null
+          # --- XFCE TERMINAL .DESKTOP KISAYOLU (ROMS/APPS İÇİN) ---
+          tee mnt/home/kgamer/RetroPie/roms/apps/terminal.desktop << 'EOF' > /dev/null
+          [Desktop Entry]
+          Name=XFCE Terminal
+          Comment=Command Line Terminal
+          Exec=xfce4-terminal
+          Icon=utilities-terminal
+          Terminal=false
+          Type=Application
+          Categories=System;Application;
+          EOF
+
+          # --- UYGULAMA FİLTRELEME SCRIPTİ ---
+          tee mnt/opt/kgamer/app-filter.sh << 'EOF' > /dev/null
           #!/bin/bash
           /opt/kgamer/gamepad-helper.sh
           APPS_SRC="/usr/share/applications"
@@ -290,7 +325,7 @@ jobs:
               dialog_args+=("$desktop_name" "$app_title" "$status")
           done
 
-          CHOICES=$(dialog --clear --title "RETROGAMER - APPS VISIBILITY FILTER (🎮/⌨️ Supported)" \
+          CHOICES=$(dialog --clear --title "RETROGAMER - APPS VISIBILITY FILTER" \
               --checklist "Select applications to show in EmulationStation APPS menu:" 22 70 12 \
               "${dialog_args[@]}" 3>&1 1>&2 2>&3)
 
@@ -340,10 +375,9 @@ jobs:
 
           dialog --msgbox "Application filter and sorting updated successfully!" 6 50
           EOF
-          sudo chmod +x mnt/opt/kgamer/app-filter.sh
+          chmod +x mnt/opt/kgamer/app-filter.sh
 
-          # Filtre Yönetim Kısayolu (`00-Filter-Apps.desktop`)
-          sudo tee mnt/home/kgamer/RetroPie/roms/apps/00-Filter-Apps.desktop << 'EOF' > /dev/null
+          tee mnt/home/kgamer/RetroPie/roms/apps/00-Filter-Apps.desktop << 'EOF' > /dev/null
           [Desktop Entry]
           Name=⚙️ Manage App Filters & Sorting
           Comment=Select and sort apps visible in EmulationStation
@@ -354,8 +388,7 @@ jobs:
           Categories=System;
           EOF
 
-          # Bee Gold Collector .desktop Kısayolu
-          sudo tee mnt/home/kgamer/RetroPie/roms/games/Bee-Gold-Collector.desktop << 'EOF' > /dev/null
+          tee mnt/home/kgamer/RetroPie/roms/games/Bee-Gold-Collector.desktop << 'EOF' > /dev/null
           [Desktop Entry]
           Type=Application
           Name=Bee Gold Collector Hero Edition
@@ -367,7 +400,7 @@ jobs:
           EOF
 
           # --- KONTROL MERKEZİ SCRIPTİ (`kgamer-setup.sh`) ---
-          sudo tee mnt/opt/kgamer/kgamer-setup.sh << 'EOF' > /dev/null
+          tee mnt/opt/kgamer/kgamer-setup.sh << 'EOF' > /dev/null
           #!/bin/bash
           if [ "$EUID" -ne 0 ]; then
               exit 1
@@ -380,7 +413,7 @@ jobs:
 
           configure_keyboard_layout() {
               /opt/kgamer/gamepad-helper.sh
-              KB_CHOICE=$(dialog --clear --title "RETROGAMER - KEYBOARD & LANGUAGE SELECTOR (🎮/⌨️ Supported)" \
+              KB_CHOICE=$(dialog --clear --title "RETROGAMER - KEYBOARD & LANGUAGE SELECTOR" \
                   --menu "Select your keyboard layout / country:" 20 65 11 \
                   "us" "English (US) - Standard QWERTY" \
                   "uk" "English (UK)" \
@@ -394,7 +427,7 @@ jobs:
                   "other" "Other Layout (Manual Code)" 3>&1 1>&2 2>&3)
 
               if [ "$KB_CHOICE" = "tr" ]; then
-                  TR_VARIANT=$(dialog --clear --title "TURKISH KEYBOARD VARIANT (🎮/⌨️ Supported)" \
+                  TR_VARIANT=$(dialog --clear --title "TURKISH KEYBOARD VARIANT" \
                       --menu "Select Turkish keyboard type:" 10 50 2 \
                       "q" "Turkish Q Klavye" \
                       "f" "Turkish F Klavye" 3>&1 1>&2 2>&3)
@@ -477,7 +510,7 @@ jobs:
                           if [ -n "$TARGET_PAD" ] && [ -n "${pad_paths[$TARGET_PAD]}" ]; then
                               target_js="${pad_paths[$TARGET_PAD]}"
                               pkill -f "joy2key.*$target_js" || true
-                              mac_addr=$(cat /sys/class/input/$(basename$target_js)/device/address 2>/dev/null || true)
+                              mac_addr=$(cat /sys/class/input/$(basename $target_js)/device/address 2>/dev/null || true)
                               if [ -n "$mac_addr" ]; then
                                   bluetoothctl disconnect "$mac_addr" &>/dev/null || true
                               else
@@ -499,7 +532,7 @@ jobs:
                   elapsed=$((current_time - start_time))
                   mins=$((elapsed / 60))
                   secs=$((elapsed % 60))
-                  time_str=$(printf "%02d:%02d" $mins$secs)
+                  time_str=$(printf "%02d:%02d" $mins $secs)
 
                   current_ip=$(hostname -I 2>/dev/null | awk '{print $1}')
                   [ -z "$current_ip" ] && current_ip="Not Connected (No IP)"
@@ -663,7 +696,7 @@ jobs:
               fi
 
               /opt/kgamer/gamepad-helper.sh
-              CHOICE=$(dialog --clear --title "RETROGAMER CONTROL CENTER (🎮/⌨️ Supported)" \
+              CHOICE=$(dialog --clear --title "RETROGAMER CONTROL CENTER" \
                   --menu "Select action (Use Arrows & Enter/ESC):" 20 65 9 \
                   "1" "RETURN TO EMULATION STATION" \
                   "2" "Open GUI Desktop (Openbox & XFCE Panel)" \
@@ -688,20 +721,20 @@ jobs:
           done
           EOF
 
-          sudo chmod +x mnt/opt/kgamer/kgamer-setup.sh
+          chmod +x mnt/opt/kgamer/kgamer-setup.sh
 
           # --- TÜM ROM KLASÖRLERİNE KONTROL MERKEZİ EKLEME ---
           ROMS_DIR="mnt/home/kgamer/RetroPie/roms"
           if [ -d "$ROMS_DIR" ]; then
               for rom_dir in "$ROMS_DIR"/*/; do
                   if [ -d "$rom_dir" ]; then
-                      sudo bash -c "cat << 'SCRIPT_EOF' > '${rom_dir}RETROGAMER-CONTROL-CENTER.sh'
+                      bash -c "cat << 'SCRIPT_EOF' > '${rom_dir}RETROGAMER-CONTROL-CENTER.sh'
           #!/bin/bash
           /opt/kgamer/kgamer-setup.sh
           SCRIPT_EOF"
-                      sudo chmod +x "${rom_dir}RETROGAMER-CONTROL-CENTER.sh"
+                      chmod +x "${rom_dir}RETROGAMER-CONTROL-CENTER.sh"
 
-                      sudo bash -c "cat << 'DESKTOP_EOF' > '${rom_dir}RETROGAMER.desktop'
+                      bash -c "cat << 'DESKTOP_EOF' > '${rom_dir}RETROGAMER.desktop'
           [Desktop Entry]
           Type=Application
           Name=RETROGAMER CONTROL CENTER
@@ -711,13 +744,13 @@ jobs:
           Terminal=true
           Categories=Game;
           DESKTOP_EOF"
-                      sudo chmod +x "${rom_dir}RETROGAMER.desktop"
+                      chmod +x "${rom_dir}RETROGAMER.desktop"
                   fi
               done
           fi
 
           # Systemd Servis Tanımlama
-          sudo tee mnt/etc/systemd/system/kgamer-setup.service << 'EOF' > /dev/null
+          tee mnt/etc/systemd/system/kgamer-setup.service << 'EOF' > /dev/null
           [Unit]
           Description=RETROGAMER First Boot Auto Setup
           After=network-online.target
@@ -733,21 +766,21 @@ jobs:
           WantedBy=multi-user.target
           EOF
 
-          sudo chroot mnt systemctl enable kgamer-setup.service
-          sudo chown -R kgamer:kgamer mnt/home/kgamer 2>/dev/null || true
+          chroot mnt systemctl enable kgamer-setup.service
+          chown -R kgamer:kgamer mnt/home/kgamer 2>/dev/null || true
 
-          sudo rm -f mnt/usr/bin/qemu-aarch64-static
-          sudo sync
+          rm -f mnt/usr/bin/qemu-aarch64-static
+          sync
 
-          sudo umount mnt/dev/pts || true
-          sudo umount mnt/dev || true
-          sudo umount mnt/sys || true
-          sudo umount mnt/proc || true
-          sudo umount mnt/boot/firmware || true
-          sudo umount mnt || true
+          umount mnt/dev/pts || true
+          umount mnt/dev || true
+          umount mnt/sys || true
+          umount mnt/proc || true
+          umount mnt/boot/firmware || true
+          umount mnt || true
 
-          sudo partx -d "$LOOP_DEV"
-          sudo losetup -d "$LOOP_DEV"
+          partx -d "$LOOP_DEV"
+          losetup -d "$LOOP_DEV"
 
           mv "$IMG_FILE" RETROGAMER.img
           zip RETROGAMER.img.zip RETROGAMER.img
