@@ -8,7 +8,7 @@ on:
 jobs:
   build-rpi-image:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 90
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
@@ -73,11 +73,10 @@ jobs:
           mkdir -p mnt/boot/firmware
           mount "$BOOT_PART" mnt/boot/firmware
 
-          # --- RASPBERRY PI RESMİ FIRMWARE VE DTB DOSYALARINI DOĞRUDAN /BOOT/FIRMWARE KLASÖRÜNE KLONLAMA ---
-          echo "=== Raspberry Pi resmi firmware and DTB dosyaları doğrudan /boot/firmware klasörüne klonlanıyor ==="
+          # --- RASPBERRY PI RESMİ FIRMWARE VE DTB DOSYALARINI KLONLAMA ---
+          echo "=== Raspberry Pi resmi firmware ve DTB dosyaları klonlanıyor ==="
           rm -rf /tmp/rpi-firmware
           git clone --depth=1 https://github.com/raspberrypi/firmware.git /tmp/rpi-firmware || {
-              echo "Git klonlama başarısız oldu, alternatif arşiv yöntemi deneniyor..."
               mkdir -p /tmp/rpi-firmware
               curl -L https://github.com/raspberrypi/firmware/archive/refs/heads/master.zip -o /tmp/firmware.zip
               unzip -q /tmp/firmware.zip -d /tmp/
@@ -87,7 +86,7 @@ jobs:
           cp -r /tmp/rpi-firmware/boot/* mnt/boot/firmware/ || true
           rm -rf /tmp/rpi-firmware
 
-          # --- DİNAMİK PARTUUID ALMA VE FSTAB / CMDLINE GÜNCELLEMESİ (ÇÖZÜM) ---
+          # --- DİNAMİK PARTUUID ALMA VE FSTAB GÜNCELLEMESİ ---
           BOOT_DEV_UUID=$(blkid -s PARTUUID -o value "$BOOT_PART")
           ROOT_DEV_UUID=$(blkid -s PARTUUID -o value "$ROOT_PART")
 
@@ -100,8 +99,6 @@ jobs:
           PARTUUID=$ROOT_DEV_UUID  /               ext4    defaults,noatime  0       1
           EOF
 
-          echo "root=PARTUUID=$ROOT_DEV_UUID rootfstype=ext4 fsck.repair=yes rootwait quiet splash plymouth.ignore-serial-consoles logo.nologo vt.handoff=7" > mnt/boot/firmware/cmdline.txt
-
           mount -t proc proc mnt/proc
           mount -t sysfs sysfs mnt/sys
           mount --bind /dev mnt/dev
@@ -109,12 +106,20 @@ jobs:
 
           cp /usr/bin/qemu-aarch64-static mnt/usr/bin/
 
+          # --- İLK AÇILIŞ (FIRSTBOOT) HATA VEREN SERVİSLERİN DEVRE DIŞI BIRAKILMASI ---
           chroot mnt systemctl disable raspi-config 2>/dev/null || true
           chroot mnt systemctl disable firstboot 2>/dev/null || true
           chroot mnt systemctl disable resize2fs_once 2>/dev/null || true
+          chroot mnt systemctl disable rpi-firstboot 2>/dev/null || true
+          
           rm -f mnt/etc/systemd/system/sysinit.target.wants/resize2fs_once.service 2>/dev/null || true
+          rm -f mnt/etc/systemd/system/multi-user.target.wants/firstboot.service 2>/dev/null || true
           rm -f mnt/etc/profile.d/raspi-config.sh 2>/dev/null || true
           rm -f mnt/boot/firstrun.sh 2>/dev/null || true
+
+          if [ -f mnt/usr/lib/raspberrypi-sys-mods/firstboot ]; then
+              sed -i 's/exit 1//g' mnt/usr/lib/raspberrypi-sys-mods/firstboot || true
+          fi
 
           chroot mnt bash -c "id -u kgamer &>/dev/null || useradd -m -s /bin/bash -G sudo,audio,video,input,games kgamer"
           chroot mnt bash -c "echo 'kgamer:kgamer' | chpasswd"
@@ -122,8 +127,8 @@ jobs:
 
           chroot mnt apt-get update -y || true
           
-          # --- DEBIAN BOOKWORM STABİL DEPOSUNDAN %100 UYUMLU PAKETLER ---
-          echo "=== Bookworm kararlı deposundan sistem, Xorg, Plymouth ve grafik kütüphaneleri kuruluyor ==="
+          # --- DEBIAN BOOKWORM STABİL DEPOSUNDAN PAKETLER ---
+          echo "=== Paketler kuruluyor ==="
           chroot mnt apt-get install -y --no-install-recommends \
               dialog git wget curl unzip xfce4-panel xfce4-terminal openbox xorg xserver-xorg \
               console-setup pcmanfm chromium libpcre2-8-0 jstest-gtk joy2key xboxdrv \
@@ -136,7 +141,7 @@ jobs:
           chroot mnt apt-get install -f -y || true
           chroot mnt apt-get clean
 
-          # --- ÖZEL OYUN .DEB PAKETİNİN (BEE GOLD COLLECTOR) KURULUMU ---
+          # --- ÖZEL OYUN .DEB PAKETİNİN KURULUMU ---
           mkdir -p mnt/tmp/debs
           if ls *.deb 1> /dev/null 2>&1; then
               cp *.deb mnt/tmp/debs/ || true
@@ -145,7 +150,7 @@ jobs:
               rm -rf mnt/tmp/debs
           fi
 
-          # --- FULLSCREEN, ASLA KAPATILAMAZ VE 150. KAREDE OTOMATİK KAPANAN PLYMOUTH TEMASI ---
+          # --- PLYMOUTH TEMASI ---
           mkdir -p mnt/usr/share/plymouth/themes/retrogamer-boot || true
 
           if [ -d "frames" ]; then
@@ -219,7 +224,7 @@ jobs:
           ./retropie_packages.sh retroarch install < /dev/null || true
           ' || true
 
-          # --- DOĞAL VE OTOMATİK GAMEPAD/KLAVYE DESTEĞİ ---
+          # --- GAMEPAD / KLAVYE YARDIMCISI ---
           mkdir -p mnt/opt/kgamer
           tee mnt/opt/kgamer/gamepad-helper.sh << 'EOF' > /dev/null
           #!/bin/bash
@@ -278,7 +283,6 @@ jobs:
           chown -R kgamer:kgamer /home/kgamer/RetroPie 2>/dev/null || true
           '
 
-          # --- XFCE TERMINAL .DESKTOP KISAYOLU (ROMS/APPS İÇİN) ---
           tee mnt/home/kgamer/RetroPie/roms/apps/terminal.desktop << 'EOF' > /dev/null
           [Desktop Entry]
           Name=XFCE Terminal
@@ -334,7 +338,7 @@ jobs:
           visible_apps=()
           for file in "${desktop_files[@]}"; do
               desktop_name=$(basename "$file")
-              if echo "$CHOICES" \vert{} grep -q "\"$desktop_name\""; then
+              if echo "$CHOICES" | grep -q "\"$desktop_name\""; then
                   visible_apps+=("$desktop_name")
               fi
           done
@@ -362,7 +366,7 @@ jobs:
 
           for desktop_name in "${desktop_files[@]}"; do
               base_name=$(basename "$desktop_name")
-              if echo "$CHOICES" \vert{} grep -q "\"$base_name\""; then
+              if echo "$CHOICES" | grep -q "\"$base_name\""; then
                   echo "$base_name:ON" >> "$SPEC_FILE"
               else
                   echo "$base_name:OFF" >> "$SPEC_FILE"
@@ -551,7 +555,7 @@ jobs:
                               nmcli dev wifi rescan &>/dev/null || true
                               while IFS= read -r line; do
                                   ssid=$(echo "$line" | awk -F: '{print $2}' | xargs)
-                                  [ -n "$ssid" ] && wifi_list="$wifi_list \"$ssid\" \"Signal: $(echo$line | awk -F: '{print $6}')%\""
+                                  [ -n "$ssid" ] && wifi_list="$wifi_list \"$ssid\" \"Signal: $(echo $line | awk -F: '{print $6}')%\""
                               done < <(nmcli -t -f SSID,SIGNAL,SECURITY dev wifi list | grep -v '^--')
                           fi
 
@@ -723,7 +727,7 @@ jobs:
 
           chmod +x mnt/opt/kgamer/kgamer-setup.sh
 
-          # --- TÜM ROM KLASÖRLERİNE KONTROL MERKEZİ EKLEME ---
+          # --- TÜM ROM KLASÖRLERİNE KONTROL MERKEZİ KISAYOLU EKLEME ---
           ROMS_DIR="mnt/home/kgamer/RetroPie/roms"
           if [ -d "$ROMS_DIR" ]; then
               for rom_dir in "$ROMS_DIR"/*/; do
