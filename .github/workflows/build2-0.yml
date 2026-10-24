@@ -39,7 +39,7 @@ jobs:
       - name: Build and Embed into Raspberry Pi Lite Image
         run: |
           [[ $EUID -ne 0 ]] && exec sudo /bin/bash "$0" "$@"
-          echo "=== RETROGAMER .IMG BUILD STARTED (FULL FEATURES & DASHBOARD) ==="
+          echo "=== RETROGAMER .IMG BUILD STARTED (SETUP MOVED TO APPS) ==="
 
           IMG_URL="https://downloads.raspberrypi.org/raspios_lite_arm64/images/raspios_lite_arm64-2024-03-15/2024-03-15-raspios-bookworm-arm64-lite.img.xz"
           
@@ -444,6 +444,18 @@ jobs:
           Terminal=true
           Type=Application
           Categories=System;
+          EOF
+
+          # --- RETROPIE SETUP SCRIPT (PORTS YERİNE APPS KLASÖRÜNE TAŞINDI) ---
+          tee mnt/home/kgamer/RetroPie/roms/apps/RetroPie-Setup.desktop << 'EOF' > /dev/null
+          [Desktop Entry]
+          Type=Application
+          Name=RetroPie Setup Script
+          Comment=Configure RetroPie Core & Packages
+          Exec=sudo /opt/kgamer/RetroPie-Setup/retropie_setup.sh
+          Icon=system-run
+          Terminal=true
+          Categories=Settings;
           EOF
 
           tee mnt/home/kgamer/RetroPie/roms/games/Bee-Gold-Collector.desktop << 'EOF' > /dev/null
