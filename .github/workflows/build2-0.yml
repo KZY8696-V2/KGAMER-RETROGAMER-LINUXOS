@@ -123,7 +123,7 @@ jobs:
               desktop-file-utils plymouth plymouth-themes plymouth-label plymouth-x11 \
               libplymouth5 pix-plym-splash libgdk-pixbuf-2.0-0 libgtk-3-0 \
               libpng16-16 libpng-tools libjpeg62-turbo libfreetype6 zlib1g \
-              libcairo2 libpango-1.0-0 libdrm2 shared-mime-info firmware-linux-free raspi-firmware || true
+              libcairo2 libpango-1.0-0 libdrm2 shared-mime-info || true
 
           chroot mnt apt-get install -f -y || true
           chroot mnt apt-get clean
