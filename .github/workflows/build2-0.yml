@@ -39,7 +39,7 @@ jobs:
       - name: Build and Embed into Raspberry Pi Lite Image
         run: |
           [[ $EUID -ne 0 ]] && exec sudo /bin/bash "$0" "$@"
-          echo "=== RETROGAMER .IMG BUILD STARTED (SETUP MOVED TO APPS) ==="
+          echo "=== RETROGAMER .IMG BUILD STARTED (FULL GAMEPAD & DIALOG SYNC) ==="
 
           IMG_URL="https://downloads.raspberrypi.org/raspios_lite_arm64/images/raspios_lite_arm64-2024-03-15/2024-03-15-raspios-bookworm-arm64-lite.img.xz"
           
@@ -211,17 +211,25 @@ jobs:
           ./retropie_packages.sh retroarch install < /dev/null || true
           ' || true
 
-          # --- GAMEPAD / KLAVYE YARDIMCISI ---
+          # --- GELİŞMİŞ GAMEPAD HELPER (D-PAD, ANALOG, X/A -> ENTER, O/B -> ESC) ---
           mkdir -p mnt/opt/kgamer
           tee mnt/opt/kgamer/gamepad-helper.sh << 'EOF' > /dev/null
           #!/bin/bash
+          export TERM=linux
           if pgrep -x "joy2key" > /dev/null; then
               exit 0
           fi
+          
+          JS_DEV=""
           if [ -e /dev/input/js0 ]; then
-              joy2key -dev /dev/input/js0 -alt &>/dev/null &
+              JS_DEV="/dev/input/js0"
           elif [ -e /dev/input/js1 ]; then
-              joy2key -dev /dev/input/js1 -alt &>/dev/null &
+              JS_DEV="/dev/input/js1"
+          fi
+
+          if [ -n "$JS_DEV" ]; then
+              # joy2key ile D-Pad/Analog -> Ok Tuşları, Buton 0 (X/A) -> Enter, Buton 1 (O/B) -> Escape
+              joy2key -dev "$JS_DEV" -keys 0x1c 0x1c 0x01 0x01 &>/dev/null &
           fi
           EOF
           chmod +x mnt/opt/kgamer/gamepad-helper.sh
@@ -446,7 +454,7 @@ jobs:
           Categories=System;
           EOF
 
-          # --- RETROPIE SETUP SCRIPT (PORTS YERİNE APPS KLASÖRÜNE TAŞINDI) ---
+          # --- RETROPIE SETUP SCRIPT (APPS KLASÖRÜNDE) ---
           tee mnt/home/kgamer/RetroPie/roms/apps/RetroPie-Setup.desktop << 'EOF' > /dev/null
           [Desktop Entry]
           Type=Application
