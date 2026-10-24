@@ -73,19 +73,6 @@ jobs:
           mkdir -p mnt/boot/firmware
           mount "$BOOT_PART" mnt/boot/firmware
 
-          # --- RASPBERRY PI RESMİ FIRMWARE VE DTB DOSYALARINI KLONLAMA ---
-          echo "=== Raspberry Pi resmi firmware ve DTB dosyaları klonlanıyor ==="
-          rm -rf /tmp/rpi-firmware
-          git clone --depth=1 https://github.com/raspberrypi/firmware.git /tmp/rpi-firmware || {
-              mkdir -p /tmp/rpi-firmware
-              curl -L https://github.com/raspberrypi/firmware/archive/refs/heads/master.zip -o /tmp/firmware.zip
-              unzip -q /tmp/firmware.zip -d /tmp/
-              mv /tmp/firmware-master/* /tmp/rpi-firmware/
-              rm -f /tmp/firmware.zip
-          }
-          cp -r /tmp/rpi-firmware/boot/* mnt/boot/firmware/ || true
-          rm -rf /tmp/rpi-firmware
-
           # --- DİNAMİK PARTUUID ALMA VE FSTAB GÜNCELLEMESİ ---
           BOOT_DEV_UUID=$(blkid -s PARTUUID -o value "$BOOT_PART")
           ROOT_DEV_UUID=$(blkid -s PARTUUID -o value "$ROOT_PART")
@@ -136,7 +123,7 @@ jobs:
               desktop-file-utils plymouth plymouth-themes plymouth-label plymouth-x11 \
               libplymouth5 pix-plym-splash libgdk-pixbuf-2.0-0 libgtk-3-0 \
               libpng16-16 libpng-tools libjpeg62-turbo libfreetype6 zlib1g \
-              libcairo2 libpango-1.0-0 libdrm2 shared-mime-info firmware-linux-free || true
+              libcairo2 libpango-1.0-0 libdrm2 shared-mime-info firmware-linux-free raspi-firmware || true
 
           chroot mnt apt-get install -f -y || true
           chroot mnt apt-get clean
@@ -772,6 +759,18 @@ jobs:
 
           chroot mnt systemctl enable kgamer-setup.service
           chown -R kgamer:kgamer mnt/home/kgamer 2>/dev/null || true
+
+          # --- BUILD LOG'LARINDA BOOT VE FIRMWARE İÇERİĞİNİ DOĞRULAMA ---
+          echo "=================================================="
+          echo "=== 🔍 /boot/firmware İÇERİK KONTROLÜ ==="
+          echo "=================================================="
+          ls -lh mnt/boot/firmware/ || true
+
+          echo "=================================================="
+          echo "=== 🔍 /boot (KÖK) DİZİNİ İÇERİK KONTROLÜ ==="
+          echo "=================================================="
+          ls -lh mnt/boot/ || true
+          echo "=================================================="
 
           rm -f mnt/usr/bin/qemu-aarch64-static
           sync
