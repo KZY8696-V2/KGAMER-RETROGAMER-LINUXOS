@@ -1,4 +1,4 @@
-name: Build RETROGAMER Trixie AMD64 Bootable .IMG Image (Full Smart Archive Edition)
+name: Build RETROGAMER AMD64 Bootable .IMG Image
 
 on:
   push:
@@ -6,9 +6,9 @@ on:
   workflow_dispatch:
 
 jobs:
-  build-retrogamer-trixie:
+  build-amd64-image:
     runs-on: ubuntu-latest
-    timeout-minutes: 150
+    timeout-minutes: 120
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
@@ -36,13 +36,13 @@ jobs:
           apt-get update
           apt-get install -y parted kpartx debootstrap squashfs-tools genisoimage grub-pc-bin grub-efi-amd64-bin mtools dosfstools wget curl unzip zip e2fsprogs fdisk gdisk jstest-gtk joy2key xboxdrv git libfuse2
 
-      - name: Build AMD64 Debian Trixie Rootfs and Bootable IMG
+      - name: Build and Embed into AMD64 Debian Rootfs and Bootable IMG
         run: |
           [[ $EUID -ne 0 ]] && exec sudo /bin/bash "$0" "$@"
-          DEBIAN_CODENAME="trixie"
-          echo "=== RETROGAMER AMD64 .IMG BUILD STARTED ($DEBIAN_CODENAME) ==="
+          DEBIAN_CODENAME="bookworm"
+          echo "=== RETROGAMER AMD64 .IMG BUILD STARTED (FULL GAMEPAD & DIALOG SYNC) ==="
 
-          IMG_FILE="RETROGAMER-$DEBIAN_CODENAME.img"
+          IMG_FILE="RETROGAMER-AMD64.img"
           
           # 6 GB Boş Disk İmajı Oluşturma
           dd if=/dev/zero of="$IMG_FILE" bs=1M count=6144 status=progress
@@ -68,13 +68,13 @@ jobs:
           mkdir -p mnt/boot/efi
           mount "$BOOT_PART" mnt/boot/efi
 
-          # Debian Bootstrap ile Trixie Temel Sistemi Kurma
+          # Debian Bootstrap ile Temel Sistem Kurma
           echo "Bootstrapping Debian $DEBIAN_CODENAME AMD64..."
           debootstrap --arch=amd64 "$DEBIAN_CODENAME" mnt http://deb.debian.org/debian/
 
           # Fstab Oluşturma
           ROOT_UUID=$(blkid -s UUID -o value "$ROOT_PART")
-          BOOT_UUID=$(blkid -s UUID -o value "$BOOT_PART")
+          BOOT_UUID=$(blkid -s UUID -o value "$ROOT_PART")
 
           cat << EOF > mnt/etc/fstab
           UUID=$ROOT_UUID  /               ext4    defaults,noatime  0       1
@@ -86,43 +86,29 @@ jobs:
           mount --bind /dev mnt/dev
           mount --bind /dev/pts mnt/dev/pts
 
-          # --- AKILLI VE OTOMATİK ARŞİV DESTEKLİ SOURCES.LIST SİSTEMİ ---
-          chroot mnt bash -c "
-          export DEBIAN_FRONTEND=noninteractive
+          chroot mnt bash -c "id -u kgamer &>/dev/null || useradd -m -s /bin/bash -G sudo,audio,video,input,games kgamer"
+          chroot mnt bash -c "echo 'kgamer:kgamer' | chpasswd"
+          chroot mnt bash -c "mkdir -p /home/kgamer && chown -R kgamer:kgamer /home/kgamer"
 
-          # Ana depolar ve otomatik devreye giren debian-archive fallback yapısı
-          cat << 'EOF' > /etc/apt/sources.list
-          deb http://deb.debian.org/debian trixie main contrib non-free non-free-firmware
-          deb http://deb.debian.org/debian-security trixie-security main contrib non-free non-free-firmware
-          deb http://deb.debian.org/debian trixie-updates main contrib non-free non-free-firmware
-
-          # Debian Archive Yedek Havuzu (Ana sunucular taşındığında otomatik devreye girer)
-          deb http://archive.debian.org/debian trixie main contrib non-free non-free-firmware
-          deb http://archive.debian.org/debian-security trixie-security main contrib non-free non-free-firmware
-          EOF
-
-          # Apt'nin arşiv sunucularındaki imzaları veya süresi dolmuş anahtar validasyonlarını esnetmesi için ayar
-          cat << 'EOF' > /etc/apt/apt.conf.d/99allow-downgrade
-          Acquire::Check-Valid-Until \"false\";
-          EOF
-
-          apt-get update
-          apt-get install -y --no-install-recommends \
+          chroot mnt apt-get update -y || true
+          
+          # --- DEBIAN STABİL DEPOSUNDAN PAKETLER ---
+          echo "=== Paketler kuruluyor ==="
+          chroot mnt apt-get install -y --no-install-recommends \
               dialog git wget curl unzip xfce4-panel xfce4-terminal openbox xorg xserver-xorg \
               console-setup pcmanfm chromium libpcre2-8-0 jstest-gtk joy2key xboxdrv \
               bluetooth bluez bluez-tools network-manager wireless-tools wpasupplicant \
               desktop-file-utils plymouth plymouth-themes plymouth-label plymouth-x11 \
               libplymouth5 pix-plym-splash libgdk-pixbuf-2.0-0 libgtk-3-0 \
               libpng16-16 libpng-tools libjpeg62-turbo libfreetype6 zlib1g \
-              libcairo2 libpango-1.0-0 libdrm2 shared-mime-info libfuse2 grub-pc grub-efi-amd64 linux-image-amd64 systemd-sysv sudo
+              libcairo2 libpango-1.0-0 libdrm2 shared-mime-info libfuse2 grub-pc grub-efi-amd64 linux-image-amd64 systemd-sysv sudo || true
 
-          useradd -m -s /bin/bash -G sudo,audio,video,input,games kgamer
-          echo 'kgamer:kgamer' | chpasswd
-          echo 'root:root' | chpasswd
-          "
+          chroot mnt apt-get install -f -y || true
+          chroot mnt apt-get clean
 
-          # --- PLYMOUTH AÇILIŞ ANİMASYONU ---
+          # --- PLYMOUTH TEMASI ---
           mkdir -p mnt/usr/share/plymouth/themes/retrogamer-boot || true
+
           if [ -d "frames" ]; then
               cp frames/frame_*.png mnt/usr/share/plymouth/themes/retrogamer-boot/ 2>/dev/null || true
           fi
@@ -141,18 +127,25 @@ jobs:
           tee mnt/usr/share/plymouth/themes/retrogamer-boot/retrogamer-boot.script << 'EOF' > /dev/null
           anim_frames = 150;
           for (i = 1; i <= anim_frames; i++) {
-              if (i < 10) { img_name = "frame_000" + i; }
-              else if (i < 100) { img_name = "frame_00" + i; }
-              else { img_name = "frame_0" + i; }
+              if (i < 10) {
+                  img_name = "frame_000" + i;
+              } else if (i < 100) {
+                  img_name = "frame_00" + i;
+              } else {
+                  img_name = "frame_0" + i;
+              }
               images[i] = Image(img_name + ".png");
           }
+
           framerate = 30;
           my_sprite = Sprite();
           screen_width = Window.GetWidth();
           screen_height = Window.GetHeight();
+
           fun refresh_callback () {
               local.time = Plymouth.GetAnimationTime();
               local.frame = Math.Int(local.time * framerate) + 1;
+              
               if (local.frame >= anim_frames) {
                   local.frame = anim_frames;
                   my_sprite.SetImage(images[local.frame]);
@@ -161,7 +154,9 @@ jobs:
               }
               my_sprite.SetImage(images[local.frame]);
           }
+
           Plymouth.SetRefreshFunction (refresh_callback);
+
           my_sprite.SetX(screen_width / 2 - images[1].GetWidth() / 2);
           my_sprite.SetY(screen_height / 2 - images[1].GetHeight() / 2);
           EOF
@@ -169,7 +164,7 @@ jobs:
           chroot mnt plymouth-set-default-theme -R retrogamer-boot || true
           chroot mnt update-initramfs -u -k all || true
 
-          # --- RETROPIE KURULUMU ---
+          # RetroPie Kurulumu ve Gömülü Setup Script Hazırlığı
           chroot mnt bash -c '
           export DEBIAN_FRONTEND=noninteractive
           mkdir -p /opt/kgamer
@@ -185,23 +180,35 @@ jobs:
           ./retropie_packages.sh retroarch install < /dev/null || true
           ' || true
 
-          # --- GAMEPAD HELPER ---
+          # --- GELİŞMİŞ GAMEPAD HELPER ---
           mkdir -p mnt/opt/kgamer
           tee mnt/opt/kgamer/gamepad-helper.sh << 'EOF' > /dev/null
           #!/bin/bash
           export TERM=linux
-          if pgrep -x "joy2key" > /dev/null; then exit 0; fi
+          if pgrep -x "joy2key" > /dev/null; then
+              exit 0
+          fi
+          
           JS_DEV=""
-          [ -e /dev/input/js0 ] && JS_DEV="/dev/input/js0"
-          [ -e /dev/input/js1 ] && JS_DEV="/dev/input/js1"
-          [ -n "$JS_DEV" ] && joy2key -dev "$JS_DEV" -keys 0x1c 0x1c 0x01 0x01 &>/dev/null &
+          if [ -e /dev/input/js0 ]; then
+              JS_DEV="/dev/input/js0"
+          elif [ -e /dev/input/js1 ]; then
+              JS_DEV="/dev/input/js1"
+          fi
+
+          if [ -n "$JS_DEV" ]; then
+              joy2key -dev "$JS_DEV" -keys 0x1c 0x1c 0x01 0x01 &>/dev/null &
+          fi
           EOF
           chmod +x mnt/opt/kgamer/gamepad-helper.sh
 
           chroot mnt bash -c '
           export DEBIAN_FRONTEND=noninteractive
-          mkdir -p /opt/kgamer/apps /opt/kgamer/backup_apps
-          mkdir -p /home/kgamer/RetroPie/roms/apps /home/kgamer/RetroPie/roms/games /home/kgamer/RetroPie/roms/ports
+          mkdir -p /opt/kgamer/apps
+          mkdir -p /opt/kgamer/backup_apps
+          mkdir -p /home/kgamer/RetroPie/roms/apps
+          mkdir -p /home/kgamer/RetroPie/roms/games
+          mkdir -p /home/kgamer/RetroPie/roms/ports
 
           cat << "EOF" > /opt/kgamer/apps/terminal.desktop
           [Desktop Entry]
@@ -243,13 +250,16 @@ jobs:
           # --- SİSTEM DURUM MONİTÖRÜ ---
           tee mnt/opt/kgamer/system-dashboard.sh << 'EOF' > /dev/null
           #!/bin/bash
-          export DEBIAN_RELEASE="trixie"
           export TERM=linux
           /opt/kgamer/gamepad-helper.sh
 
           while true; do
-              cpu_temp=$(cat /sys/class/thermal/thermal_zone0/temp 2>/dev/null | awk '{printf "%.1f°C", $1/1000}')
-              [ -z "$cpu_temp" ] && cpu_temp="N/A"
+              if command -v vcgencmd &> /dev/null; then
+                  cpu_temp=$(vcgencmd measure_temp | awk -F= '{print $2}')
+              else
+                  cpu_temp=$(cat /sys/class/thermal/thermal_zone0/temp 2>/dev/null | awk '{printf "%.1f°C", $1/1000}')
+                  [ -z "$cpu_temp" ] && cpu_temp="N/A"
+              fi
 
               cpu_usage=$(top -bn1 | grep "Cpu(s)" | awk '{print 100 - $8"%"}')
               [ -z "$cpu_usage" ] && cpu_usage="N/A"
@@ -274,20 +284,28 @@ jobs:
 
               uptime_str=$(uptime -p)
 
-              dialog --clear --title "RETROGAMER (trixie) - SYSTEM STATUS" \
-                  --msgbox "DEBIAN RELEASE : trixie ($cpu_arch)
+              dialog --clear --title "RETROGAMER - SYSTEM STATUS DASHBOARD" \
+                  --msgbox "CPU TEMPERATURE & HARDWARE INFO
 
           CPU Temperature : $cpu_temp
           CPU Usage       : $cpu_usage
           CPU Clock Speed : $cpu_freq
+          CPU Architecture: $cpu_arch
 
           MEMORY (RAM) STATUS
-          Total RAM       : $ram_total | Used: $ram_used | Free: $ram_free
+
+          Total RAM       : $ram_total
+          Used RAM        : $ram_used
+          Free RAM        : $ram_free
 
           STORAGE STATUS
-          Total Storage   : $disk_total | Used: $disk_used ($disk_pct)
+
+          Total Storage   : $disk_total
+          Used Storage    : $disk_used ($disk_pct)
+          Available Free  : $disk_avail
 
           SYSTEM RUNTIME
+
           Uptime          : $uptime_str" 22 65
               break
           done
@@ -309,17 +327,19 @@ jobs:
           # --- UYGULAMA FİLTRELEME SCRIPTİ ---
           tee mnt/opt/kgamer/app-filter.sh << 'EOF' > /dev/null
           #!/bin/bash
-          export DEBIAN_RELEASE="trixie"
           /opt/kgamer/gamepad-helper.sh
           APPS_SRC="/usr/share/applications"
           APPS_DEST="/home/kgamer/RetroPie/roms/apps"
           SPEC_FILE="/opt/kgamer/apps_filter.spec"
 
           mkdir -p "$APPS_DEST"
+
           desktop_files=()
           while IFS= read -r file; do
               if [ -f "$file" ]; then
-                  if grep -q "NoDisplay=true" "$file"; then continue; fi
+                  if grep -q "NoDisplay=true" "$file"; then
+                      continue
+                  fi
                   desktop_files+=("$file")
               fi
           done < <(find "$APPS_SRC" -name "*.desktop")
@@ -329,32 +349,65 @@ jobs:
               desktop_name=$(basename "$file")
               app_title=$(grep -m 1 "^Name=" "$file" | cut -d '=' -f2-)
               [ -z "$app_title" ] && app_title="$desktop_name"
+              
               status="ON"
-              if [ -f "$SPEC_FILE" ] && grep -q "$desktop_name:OFF" "$SPEC_FILE"; then status="OFF"; fi
+              if [ -f "$SPEC_FILE" ]; then
+                  if grep -q "$desktop_name:OFF" "$SPEC_FILE"; then
+                      status="OFF"
+                  fi
+              fi
               dialog_args+=("$desktop_name" "$app_title" "$status")
           done
 
-          CHOICES=$(dialog --clear --title "RETROGAMER (trixie) - APPS FILTER" \
+          CHOICES=$(dialog --clear --title "RETROGAMER - APPS VISIBILITY FILTER" \
               --checklist "Select applications to show in EmulationStation APPS menu:" 22 70 12 \
               "${dialog_args[@]}" 3>&1 1>&2 2>&3)
+
           clear
 
           visible_apps=()
           for file in "${desktop_files[@]}"; do
               desktop_name=$(basename "$file")
-              if echo "$CHOICES" | grep -q "\"$desktop_name\""; then visible_apps+=("$desktop_name"); fi
+              if echo "$CHOICES" | grep -q "\"$desktop_name\""; then
+                  visible_apps+=("$desktop_name")
+              fi
           done
+
+          SORT_CHOICE=$(dialog --clear --title "RETROGAMER - APPS SORTING" \
+              --menu "Select sorting method for apps:" 12 50 3 \
+              "1" "Alphabetical Order (A-Z)" \
+              "2" "Reverse Alphabetical Order (Z-A)" \
+              "3" "Keep Default / Custom Spec Order" 3>&1 1>&2 2>&3)
+
+          clear
+
+          if [ "$SORT_CHOICE" = "1" ]; then
+              IFS=$'\n' sorted_apps=($(sort <<< "${visible_apps[*]}"))
+              unset IFS
+          elif [ "$SORT_CHOICE" = "2" ]; then
+              IFS=$'\n' sorted_apps=($(sort -r <<< "${visible_apps[*]}"))
+              unset IFS
+          else
+              sorted_apps=("${visible_apps[@]}")
+          fi
 
           find "$APPS_DEST" -name "*.desktop" ! -name "00-Filter-Apps.desktop" -delete
           > "$SPEC_FILE"
+
           for desktop_name in "${desktop_files[@]}"; do
               base_name=$(basename "$desktop_name")
-              if echo "$CHOICES" | grep -q "\"$base_name\""; then echo "$base_name:ON" >> "$SPEC_FILE"; else echo "$base_name:OFF" >> "$SPEC_FILE"; fi
+              if echo "$CHOICES" | grep -q "\"$base_name\""; then
+                  echo "$base_name:ON" >> "$SPEC_FILE"
+              else
+                  echo "$base_name:OFF" >> "$SPEC_FILE"
+              fi
           done
-          for app in "${visible_apps[@]}"; do
+
+          for app in "${sorted_apps[@]}"; do
               ln -sf "$APPS_SRC/$app" "$APPS_DEST/$app"
           done
-          dialog --msgbox "Application filter updated successfully for trixie!" 6 50
+
+          dialog --msgbox "Application filter and sorting updated successfully!" 6 50
           EOF
           chmod +x mnt/opt/kgamer/app-filter.sh
 
@@ -380,11 +433,13 @@ jobs:
           Categories=Settings;
           EOF
 
-          # --- KONTROL MERKEZİ (`kgamer-setup.sh`) ---
+          # --- KONTROL MERKEZİ SCRIPTİ (`kgamer-setup.sh`) ---
           tee mnt/opt/kgamer/kgamer-setup.sh << 'EOF' > /dev/null
           #!/bin/bash
-          if [ "$EUID" -ne 0 ]; then exit 1; fi
-          export DEBIAN_RELEASE="trixie"
+          if [ "$EUID" -ne 0 ]; then
+              exit 1
+          fi
+
           /opt/kgamer/gamepad-helper.sh
 
           APPS_DIR="/opt/kgamer/apps"
@@ -392,7 +447,7 @@ jobs:
 
           configure_keyboard_layout() {
               /opt/kgamer/gamepad-helper.sh
-              KB_CHOICE=$(dialog --clear --title "RETROGAMER (trixie) - KEYBOARD & LANGUAGE" \
+              KB_CHOICE=$(dialog --clear --title "RETROGAMER - KEYBOARD & LANGUAGE SELECTOR" \
                   --menu "Select your keyboard layout / country:" 20 65 11 \
                   "us" "English (US) - Standard QWERTY" \
                   "uk" "English (UK)" \
@@ -411,24 +466,41 @@ jobs:
                       "q" "Turkish Q Klavye" \
                       "f" "Turkish F Klavye" 3>&1 1>&2 2>&3)
                   if [ "$TR_VARIANT" = "f" ]; then
+                      KB_CHOICE="tr"
+                      VARIANT_ARG="f"
+                  else
+                      KB_CHOICE="tr"
+                      VARIANT_ARG="q"
+                  fi
+              elif [ "$KB_CHOICE" = "other" ]; then
+                  CUSTOM_KB=$(dialog --inputbox "Enter keyboard layout code (e.g., us, tr, dk, fi):" 8 50 "us" 3>&1 1>&2 2>&3)
+                  [ -n "$CUSTOM_KB" ] && KB_CHOICE="$CUSTOM_KB"
+              fi
+
+              if [ -n "$KB_CHOICE" ]; then
+                  if [ "$KB_CHOICE" = "tr" ] && [ "$VARIANT_ARG" = "f" ]; then
                       localectl set-x11-keymap tr pc105 f 2>/dev/null || true
                       loadkeys trf 2>/dev/null || true
-                      dialog --msgbox "Keyboard updated to Turkish F (trixie)!" 5 50
+                      dialog --msgbox "Keyboard layout successfully updated to Turkish F!" 5 50
                   else
-                      localectl set-x11-keymap tr pc105 q 2>/dev/null || true
-                      loadkeys tr 2>/dev/null || true
-                      dialog --msgbox "Keyboard updated to Turkish Q (trixie)!" 5 50
+                      localectl set-x11-keymap "$KB_CHOICE" 2>/dev/null || true
+                      loadkeys "$KB_CHOICE" 2>/dev/null || true
+                      dialog --msgbox "Keyboard layout successfully updated to '$KB_CHOICE'!" 5 50
                   fi
-              elif [ -n "$KB_CHOICE" ] && [ "$KB_CHOICE" != "other" ]; then
-                  localectl set-x11-keymap "$KB_CHOICE" 2>/dev/null || true
-                  loadkeys "$KB_CHOICE" 2>/dev/null || true
-                  dialog --msgbox "Keyboard updated to $KB_CHOICE!" 5 50
               fi
           }
 
           scan_and_manage_gamepads() {
               /opt/kgamer/gamepad-helper.sh
+              start_time=$(date +%s)
+              
               while true; do
+                  current_time=$(date +%s)
+                  elapsed=$((current_time - start_time))
+                  mins=$((elapsed / 60))
+                  secs=$((elapsed % 60))
+                  time_str=$(printf "%02d:%02d" $mins $secs)
+
                   found_pads=""
                   index=1
                   declare -A pad_paths
@@ -442,68 +514,231 @@ jobs:
                   done
 
                   if [ -z "$found_pads" ]; then
-                      timeout 5 dialog --clear --title "RETROGAMER (trixie) - GAMEPADS" \
-                          --msgbox "No gamepads connected. Searching continuously...\n(Press ESC or Enter to return)" 7 50
-                      [ $? -ne 0 ] && break
+                      timeout 5 dialog --clear --title "RETROGAMER - GAMEPAD MANAGER (Süre: $time_str)" \
+                          --msgbox "No gamepads connected. Searching continuously...\n(Press ESC or Enter to access menu / Stop)" 8 55
+                      ret_val=$?
+                      if [ $ret_val -ne 0 ]; then
+                          break
+                      fi
                   else
                       exec 3>&1
-                      SUB_CHOICE=$(eval dialog --clear --title "RETROGAMER (trixie) - GAMEPADS" \
-                          --menu "Connected gamepads found. Select option:" 14 65 4 \
-                          "REFRESH" "🔄 Rescan Gamepads" \
-                          "DISCONNECT" "🔌 Disconnect Gamepad" \
-                          "BACK" "🔙 Back to Menu" $found_pads 2>&1 3>&-)
+                      SUB_CHOICE=$(eval dialog --clear --title "RETROGAMER - GAMEPAD MANAGER (Süre: $time_str)" \
+                          --menu "Connected gamepads found. Select to Disconnect/Unpair or Rescan:" 16 70 7 \
+                          "REFRESH" "🔄 Rescan / Refresh List" \
+                          "DISCONNECT" "🔌 Disconnect / Kill Gamepad Connection" \
+                          "BACK" "🔙 Return to Main Menu" \
+                          $found_pads 2>&1 3>&-);
+                      ret_val=$?
                       exec 3>&-
-                      [ $? -ne 0 ] || [ "$SUB_CHOICE" = "BACK" ] && break
-                      [ "$SUB_CHOICE" = "DISCONNECT" ] && pkill -f "joy2key" || true
+
+                      if [ $ret_val -ne 0 ] || [ "$SUB_CHOICE" = "BACK" ]; then
+                          break
+                      elif [ "$SUB_CHOICE" = "REFRESH" ]; then
+                          continue
+                      elif [ "$SUB_CHOICE" = "DISCONNECT" ]; then
+                          exec 3>&1
+                          TARGET_PAD=$(eval dialog --clear --title "DISCONNECT GAMEPAD" \
+                              --menu "Select gamepad to disconnect:" 12 60 4 $found_pads 2>&1 3>&-);
+                          exec 3>&-
+                          
+                          if [ -n "$TARGET_PAD" ] && [ -n "${pad_paths[$TARGET_PAD]}" ]; then
+                              target_js="${pad_paths[$TARGET_PAD]}"
+                              pkill -f "joy2key.*$target_js" || true
+                              mac_addr=$(cat /sys/class/input/$(basename $target_js)/device/address 2>/dev/null || true)
+                              if [ -n "$mac_addr" ]; then
+                                  bluetoothctl disconnect "$mac_addr" &>/dev/null || true
+                              else
+                                  bluetoothctl disconnect &>/dev/null || true
+                              fi
+                              dialog --msgbox "Gamepad disconnected successfully!" 5 45
+                          fi
+                      fi
                   fi
               done
           }
 
           wifi_manager_menu() {
               /opt/kgamer/gamepad-helper.sh
-              current_ip=$(hostname -I 2>/dev/null | awk '{print $1}')
-              [ -z "$current_ip" ] && current_ip="Not Connected"
-              WIFI_ACTION=$(dialog --clear --title "RETROGAMER (trixie) - WIFI" \
-                  --menu "Current IP: $current_ip\nSelect Action:" 15 60 3 \
-                  "1" "🔍 View IP Address" \
-                  "2" "❌ Disconnect Wi-Fi" \
-                  "3" "🔙 Back to Main Menu" 3>&1 1>&2 2>&3)
-              [ "$WIFI_ACTION" = "1" ] && dialog --msgbox "IP Address: $current_ip" 5 35
-              [ "$WIFI_ACTION" = "2" ] && nmcli dev disconnect wlan0 &>/dev/null || true
+              start_time=$(date +%s)
+
+              while true; do
+                  current_time=$(date +%s)
+                  elapsed=$((current_time - start_time))
+                  mins=$((elapsed / 60))
+                  secs=$((elapsed % 60))
+                  time_str=$(printf "%02d:%02d" $mins $secs)
+
+                  current_ip=$(hostname -I 2>/dev/null | awk '{print $1}')
+                  [ -z "$current_ip" ] && current_ip="Not Connected (No IP)"
+
+                  WIFI_ACTION=$(dialog --clear --title "RETROGAMER - WIFI MANAGER (Süre: $time_str)" \
+                      --menu "Current IP: $current_ip\nSelect Wi-Fi Action:" 18 65 7 \
+                      "1" "📡 Scan & Connect Wi-Fi (Continuous Auto-Scan)" \
+                      "2" "🔍 View Current IP Address" \
+                      "3" "❌ Disconnect / Forget Wi-Fi Connection" \
+                      "4" "🔙 Return to Main Menu" 3>&1 1>&2 2>&3)
+
+                  case $WIFI_ACTION in
+                      1)
+                          wifi_list=""
+                          if command -v nmcli &> /dev/null; then
+                              nmcli dev wifi rescan &>/dev/null || true
+                              while IFS= read -r line; do
+                                  ssid=$(echo "$line" | awk -F: '{print $2}' | xargs)
+                                  [ -n "$ssid" ] && wifi_list="$wifi_list \"$ssid\" \"Signal: $(echo $line | awk -F: '{print $6}')%\""
+                              done < <(nmcli -t -f SSID,SIGNAL,SECURITY dev wifi list | grep -v '^--')
+                          fi
+
+                          if [ -z "$wifi_list" ]; then
+                              timeout 5 dialog --clear --title "WIFI SCAN (Süre: $time_str)" \
+                                  --msgbox "No Wi-Fi networks found or scanning...\n(Timeout active, will retry continuously)" 7 50
+                          else
+                              exec 3>&1
+                              CHOSEN_SSID=$(eval dialog --clear --title "AVAILABLE WIFI NETWORKS" \
+                                  --menu "Select network to connect automatically:" 15 60 6 $wifi_list 2>&1 3>&-);
+                              ret_val=$?
+                              exec 3>&-
+
+                              if [ $ret_val -eq 0 ] && [ -n "$CHOSEN_SSID" ]; then
+                                  WIFI_PASS=$(dialog --clear --title "WIFI PASSWORD" \
+                                      --passwordbox "Enter password for '$CHOSEN_SSID':" 8 50 3>&1 1>&2 2>&3)
+                                  if [ -n "$WIFI_PASS" ]; then
+                                      nmcli dev wifi connect "$CHOSEN_SSID" password "$WIFI_PASS" &>/dev/null || \
+                                      sudo nmcli dev wifi connect "$CHOSEN_SSID" password "$WIFI_PASS" &>/dev/null || true
+                                      dialog --msgbox "Attempted connection to '$CHOSEN_SSID'!" 5 50
+                                  fi
+                              fi
+                          fi
+                          ;;
+                      2)
+                          dialog --msgbox "Current Device IP Address:\n$current_ip" 6 40
+                          ;;
+                      3)
+                          if command -v nmcli &> /dev/null; then
+                              active_conn=$(nmcli -t -f NAME,TYPE connection show --active | grep wireless | cut -d: -f1)
+                              if [ -n "$active_conn" ]; then
+                                  nmcli connection down "$active_conn" &>/dev/null || true
+                                  nmcli connection delete "$active_conn" &>/dev/null || true
+                              else
+                                  nmcli dev disconnect wlan0 &>/dev/null || true
+                              fi
+                          fi
+                          dialog --msgbox "Wi-Fi connection disconnected and forgotten successfully!" 6 50
+                          ;;
+                      4|*)
+                          break
+                          ;;
+                  esac
+              done
           }
 
           create_new_user_account() {
               /opt/kgamer/gamepad-helper.sh
-              NEW_USER=$(dialog --clear --title "NEW USER (trixie)" --inputbox "Enter new username:" 8 50 3>&1 1>&2 2>&3)
-              [ -z "$NEW_USER" ] && return
-              NEW_PASS=$(dialog --clear --title "NEW USER PASSWORD" --passwordbox "Enter password for $NEW_USER:" 8 50 3>&1 1>&2 2>&3)
-              [ -z "$NEW_PASS" ] && return
+              while true; do
+                  NEW_USER=$(dialog --clear --title "NEW USER SETUP (MANDATORY)" \
+                      --inputbox "Enter new username (Cannot be empty):" 8 50 3>&1 1>&2 2>&3)
+                  [ -z "$NEW_USER" ] && continue
+                  
+                  if id "$NEW_USER" &>/dev/null; then
+                      dialog --msgbox "User '$NEW_USER' already exists! Choose another name." 6 50
+                      continue
+                  fi
+                  break
+              done
+
+              while true; do
+                  NEW_PASS=$(dialog --clear --title "NEW USER PASSWORD (MANDATORY)" \
+                      --passwordbox "Enter password for $NEW_USER (Cannot be empty):" 8 50 3>&1 1>&2 2>&3)
+                  [ -z "$NEW_PASS" ] && continue
+                  break
+              done
+
               useradd -m -s /bin/bash -G sudo,audio,video,input,games "$NEW_USER" 2>/dev/null
               echo "$NEW_USER:$NEW_PASS" | chpasswd
-              dialog --msgbox "User '$NEW_USER' created successfully for trixie!" 5 50
+              dialog --msgbox "User '$NEW_USER' created successfully!" 5 45
           }
 
           edit_existing_user() {
               /opt/kgamer/gamepad-helper.sh
-              TARGET_USER=$(dialog --clear --title "EDIT USER" --inputbox "Enter username to edit:" 8 50 "kgamer" 3>&1 1>&2 2>&3)
-              [ -z "$TARGET_USER" ] || ! id "$TARGET_USER" &>/dev/null && return
-              NEW_P=$(dialog --clear --title "CHANGE PASSWORD" --passwordbox "Enter new password for $TARGET_USER:" 8 50 3>&1 1>&2 2>&3)
-              [ -n "$NEW_P" ] && echo "$TARGET_USER:$NEW_P" | chpasswd && dialog --msgbox "Password updated!" 5 35
+              while true; do
+                  TARGET_USER=$(dialog --clear --title "EDIT USER (MANDATORY)" \
+                      --inputbox "Enter existing username to edit (e.g., kgamer):" 8 50 "kgamer" 3>&1 1>&2 2>&3)
+                  [ -z "$TARGET_USER" ] && continue
+                  
+                  if id "$TARGET_USER" &>/dev/null; then
+                      break
+                  else
+                      dialog --msgbox "User '$TARGET_USER' not found! Try again." 5 45
+                  fi
+              done
+
+              ACTION=$(dialog --clear --title "Edit User: $TARGET_USER" \
+                  --menu "Select option:" 12 50 2 \
+                  "1" "Change Username" \
+                  "2" "Change Password" 3>&1 1>&2 2>&3)
+              
+              if [ "$ACTION" = "1" ]; then
+                  while true; do
+                      NEW_NAME=$(dialog --clear --title "CHANGE USERNAME" \
+                          --inputbox "Enter new username for $TARGET_USER:" 8 50 3>&1 1>&2 2>&3)
+                      [ -z "$NEW_NAME" ] && continue
+                      usermod -l "$NEW_NAME" "$TARGET_USER" 2>/dev/null
+                      dialog --msgbox "Username changed to '$NEW_NAME' successfully!" 5 50
+                      break
+                  done
+              elif [ "$ACTION" = "2" ]; then
+                  while true; do
+                      NEW_P=$(dialog --clear --title "CHANGE PASSWORD" \
+                          --passwordbox "Enter new password for $TARGET_USER:" 8 50 3>&1 1>&2 2>&3)
+                      [ -z "$NEW_P" ] && continue
+                      echo "$TARGET_USER:$NEW_P" | chpasswd
+                      dialog --msgbox "Password updated successfully!" 5 40
+                      break
+                  done
+              fi
           }
 
           change_root_password() {
               /opt/kgamer/gamepad-helper.sh
-              ROOT_P=$(dialog --passwordbox "Enter new ROOT password for trixie:" 8 50 3>&1 1>&2 2>&3)
-              [ -n "$ROOT_P" ] && echo "root:$ROOT_P" | chpasswd && dialog --msgbox "Root password updated!" 5 35
+              ROOT_P=$(dialog --passwordbox "Enter new ROOT password:" 8 50 3>&1 1>&2 2>&3)
+              if [ -n "$ROOT_P" ]; then
+                  echo "root:$ROOT_P" | chpasswd
+                  dialog --msgbox "Root password updated successfully!" 5 45
+              fi
           }
 
           start_desktop_environment() {
               clear
-              echo "[+] Openbox ve XFCE Paneli (trixie) başlatılıyor..."
+              echo "[+] Openbox ve Alttaki XFCE Paneli başlatılıyor..."
               export DISPLAY=:0
               xfconf-query -c xfce4-panel -p /panels/panel-1/position -s "p=8;x=0;y=0" --create -t string 2>/dev/null || true
               xfce4-panel --display=:0 &
               exec openbox-session
+          }
+
+          run_retropie_setup() {
+              clear
+              echo "[+] RetroPie Setup Script başlatılıyor..."
+              cd /opt/kgamer/RetroPie-Setup
+              sudo ./retropie_packages.sh
+              echo ""
+              read -p "Press Enter to return to RETROGAMER Control Center..."
+          }
+
+          shutdown_restart_menu() {
+              SHUT_CHOICE=$(dialog --clear --title "POWER OPTIONS" \
+                  --menu "Select Power Action:" 12 50 3 \
+                  "1" "🔄 Restart System" \
+                  "2" "🛑 Shutdown System" \
+                  "3" "🔙 Back to Control Center" 3>&1 1>&2 2>&3)
+              
+              if [ "$SHUT_CHOICE" = "1" ]; then
+                  clear
+                  sudo reboot
+              elif [ "$SHUT_CHOICE" = "2" ]; then
+                  clear
+                  sudo poweroff
+              fi
           }
 
           if [ ! -f "/opt/kgamer/.keyboard_configured" ]; then
@@ -520,8 +755,8 @@ jobs:
               fi
 
               /opt/kgamer/gamepad-helper.sh
-              CHOICE=$(dialog --clear --title "RETROGAMER CONTROL CENTER (trixie)" \
-                  --menu "Select action (Use Arrows & Enter/ESC):" 20 65 9 \
+              CHOICE=$(dialog --clear --title "RETROGAMER CONTROL CENTER" \
+                  --menu "Select action (Use Arrows & Enter/ESC):" 22 65 10 \
                   "1" "RETURN TO EMULATION STATION" \
                   "2" "Open GUI Desktop (Openbox & XFCE Panel)" \
                   "3" "Change Keyboard Layout & Language" \
@@ -530,7 +765,8 @@ jobs:
                   "6" "Create New User Account" \
                   "7" "Edit Existing User (Name/Password)" \
                   "8" "Change Root Password" \
-                  "9" "Exit / Shutdown" 3>&1 1>&2 2>&3)
+                  "9" "Open RetroPie Setup Script" \
+                  "10" "Exit / Restart / Shutdown" 3>&1 1>&2 2>&3)
               case $CHOICE in
                   1) clear; emulationstation ;;
                   2) start_desktop_environment ;;
@@ -540,26 +776,41 @@ jobs:
                   6) create_new_user_account ;;
                   7) edit_existing_user ;;
                   8) change_root_password ;;
-                  9) clear; exit 0 ;;
+                  9) run_retropie_setup ;;
+                  10) shutdown_restart_menu ;;
               esac
           done
           EOF
+
           chmod +x mnt/opt/kgamer/kgamer-setup.sh
 
-          # --- ROM KLASÖRLERİNE KONTROL MERKEZİ KISAYOLU ---
+          # --- TÜM ROM KLASÖRLERİNE KONTROL MERKEZİ KISAYOLU EKLEME ---
           ROMS_DIR="mnt/home/kgamer/RetroPie/roms"
           if [ -d "$ROMS_DIR" ]; then
               for rom_dir in "$ROMS_DIR"/*/; do
                   if [ -d "$rom_dir" ]; then
-                      echo -e "#!/bin/bash\n/opt/kgamer/kgamer-setup.sh" > "${rom_dir}RETROGAMER-CONTROL-CENTER.sh"
+                      bash -c "cat << 'SCRIPT_EOF' > '${rom_dir}RETROGAMER-CONTROL-CENTER.sh'
+          #!/bin/bash
+          /opt/kgamer/kgamer-setup.sh
+          SCRIPT_EOF"
                       chmod +x "${rom_dir}RETROGAMER-CONTROL-CENTER.sh"
-                      echo -e "[Desktop Entry]\nType=Application\nName=RETROGAMER CONTROL CENTER\nExec=/opt/kgamer/kgamer-setup.sh\nIcon=gamepad\nTerminal=true" > "${rom_dir}RETROGAMER.desktop"
+
+                      bash -c "cat << 'DESKTOP_EOF' > '${rom_dir}RETROGAMER.desktop'
+          [Desktop Entry]
+          Type=Application
+          Name=RETROGAMER CONTROL CENTER
+          Comment=RETROGAMER OS Launcher
+          Exec=/opt/kgamer/kgamer-setup.sh
+          Icon=gamepad
+          Terminal=true
+          Categories=Game;
+          DESKTOP_EOF"
                       chmod +x "${rom_dir}RETROGAMER.desktop"
                   fi
               done
           fi
 
-          # --- SYSTEMD SERVİS TANIMLAMA ---
+          # Systemd Servis Tanımlama
           tee mnt/etc/systemd/system/kgamer-setup.service << 'EOF' > /dev/null
           [Unit]
           Description=RETROGAMER First Boot Auto Setup
@@ -579,12 +830,11 @@ jobs:
           chroot mnt systemctl enable kgamer-setup.service
           chown -R kgamer:kgamer mnt/home/kgamer 2>/dev/null || true
 
-          # --- GRUB KURULUMU (BIOS & UEFI) ---
+          # --- GRUB KURULUMU (AMD64 BIOS & UEFI) ---
           chroot mnt grub-install --target=i386-pc "$LOOP_DEV" || true
           chroot mnt grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=DEBIAN --recheck || true
           chroot mnt update-grub
 
-          # Temizlik ve Unmount İşlemleri
           sync
           umount mnt/dev/pts || true
           umount mnt/dev || true
@@ -596,10 +846,11 @@ jobs:
           partx -d "$LOOP_DEV"
           losetup -d "$LOOP_DEV"
 
-          zip "${IMG_FILE}.zip" "$IMG_FILE"
+          mv "$IMG_FILE" RETROGAMER-AMD64.img
+          zip RETROGAMER-AMD64.img.zip RETROGAMER-AMD64.img
 
-      - name: Upload Final Bootable .IMG Artifact (Trixie Full Archive Ready)
+      - name: Upload Final Bootable .IMG Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: RETROGAMER-trixie-full-archive-IMG
-          path: RETROGAMER-trixie.img.zip
+          name: RETROGAMER-AMD64-IMG
+          path: RETROGAMER-AMD64.img.zip
