@@ -1,0 +1,605 @@
+name: Build RETROGAMER Trixie AMD64 Bootable .IMG Image (Full Smart Archive Edition)
+
+on:
+  push:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+jobs:
+  build-retrogamer-trixie:
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Clean Up Last 10 Failed Workflow Runs
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          [[ $EUID -ne 0 ]] && exec sudo /bin/bash "$0" "$@"
+          echo "Checking and cleaning up to 10 oldest failed workflow runs..."
+          REPO="${{ github.repository }}"
+          
+          for run_id in $(gh api repos/$REPO/actions/runs --jq '.workflow_runs[] | select(.conclusion == "failure") | .id' | tail -n 10); do
+              echo "Deleting failed run ID: $run_id"
+              gh api --method DELETE repos/$REPO/actions/runs/$run_id || true
+          done
+          echo "Failed runs cleanup completed."
+
+      - name: Install Image Building Dependencies
+        run: |
+          [[ $EUID -ne 0 ]] && exec sudo /bin/bash "$0" "$@"
+          rm -f /etc/apt/sources.list.d/microsoft*
+          rm -f /etc/apt/trusted.gpg.d/microsoft*
+
+          apt-get update
+          apt-get install -y parted kpartx debootstrap squashfs-tools genisoimage grub-pc-bin grub-efi-amd64-bin mtools dosfstools wget curl unzip zip e2fsprogs fdisk gdisk jstest-gtk joy2key xboxdrv git libfuse2
+
+      - name: Build AMD64 Debian Trixie Rootfs and Bootable IMG
+        run: |
+          [[ $EUID -ne 0 ]] && exec sudo /bin/bash "$0" "$@"
+          DEBIAN_CODENAME="trixie"
+          echo "=== RETROGAMER AMD64 .IMG BUILD STARTED ($DEBIAN_CODENAME) ==="
+
+          IMG_FILE="RETROGAMER-$DEBIAN_CODENAME.img"
+          
+          # 6 GB Boş Disk İmajı Oluşturma
+          dd if=/dev/zero of="$IMG_FILE" bs=1M count=6144 status=progress
+
+          # GPT Disk Bölümleme (EFI Boot + RootFS)
+          parted -s "$IMG_FILE" mklabel gpt
+          parted -s "$IMG_FILE" mkpart primary fat32 1MiB 512MiB
+          parted -s "$IMG_FILE" set 1 esp on
+          parted -s "$IMG_FILE" mkpart primary ext4 512MiB 100%
+
+          LOOP_DEV=$(losetup --find --show "$IMG_FILE")
+          partx -a "$LOOP_DEV"
+          sleep 3
+
+          BOOT_PART="${LOOP_DEV}p1"
+          ROOT_PART="${LOOP_DEV}p2"
+
+          mkfs.vfat -F32 -n "EFI" "$BOOT_PART"
+          mkfs.ext4 -L "ROOTFS" "$ROOT_PART"
+
+          mkdir -p mnt
+          mount "$ROOT_PART" mnt
+          mkdir -p mnt/boot/efi
+          mount "$BOOT_PART" mnt/boot/efi
+
+          # Debian Bootstrap ile Trixie Temel Sistemi Kurma
+          echo "Bootstrapping Debian $DEBIAN_CODENAME AMD64..."
+          debootstrap --arch=amd64 "$DEBIAN_CODENAME" mnt http://deb.debian.org/debian/
+
+          # Fstab Oluşturma
+          ROOT_UUID=$(blkid -s UUID -o value "$ROOT_PART")
+          BOOT_UUID=$(blkid -s UUID -o value "$BOOT_PART")
+
+          cat << EOF > mnt/etc/fstab
+          UUID=$ROOT_UUID  /               ext4    defaults,noatime  0       1
+          UUID=$BOOT_UUID  /boot/efi       vfat    defaults          0       2
+          EOF
+
+          mount -t proc proc mnt/proc
+          mount -t sysfs sysfs mnt/sys
+          mount --bind /dev mnt/dev
+          mount --bind /dev/pts mnt/dev/pts
+
+          # --- AKILLI VE OTOMATİK ARŞİV DESTEKLİ SOURCES.LIST SİSTEMİ ---
+          chroot mnt bash -c "
+          export DEBIAN_FRONTEND=noninteractive
+
+          # Ana depolar ve otomatik devreye giren debian-archive fallback yapısı
+          cat << 'EOF' > /etc/apt/sources.list
+          deb http://deb.debian.org/debian trixie main contrib non-free non-free-firmware
+          deb http://deb.debian.org/debian-security trixie-security main contrib non-free non-free-firmware
+          deb http://deb.debian.org/debian trixie-updates main contrib non-free non-free-firmware
+
+          # Debian Archive Yedek Havuzu (Ana sunucular taşındığında otomatik devreye girer)
+          deb http://archive.debian.org/debian trixie main contrib non-free non-free-firmware
+          deb http://archive.debian.org/debian-security trixie-security main contrib non-free non-free-firmware
+          EOF
+
+          # Apt'nin arşiv sunucularındaki imzaları veya süresi dolmuş anahtar validasyonlarını esnetmesi için ayar
+          cat << 'EOF' > /etc/apt/apt.conf.d/99allow-downgrade
+          Acquire::Check-Valid-Until \"false\";
+          EOF
+
+          apt-get update
+          apt-get install -y --no-install-recommends \
+              dialog git wget curl unzip xfce4-panel xfce4-terminal openbox xorg xserver-xorg \
+              console-setup pcmanfm chromium libpcre2-8-0 jstest-gtk joy2key xboxdrv \
+              bluetooth bluez bluez-tools network-manager wireless-tools wpasupplicant \
+              desktop-file-utils plymouth plymouth-themes plymouth-label plymouth-x11 \
+              libplymouth5 pix-plym-splash libgdk-pixbuf-2.0-0 libgtk-3-0 \
+              libpng16-16 libpng-tools libjpeg62-turbo libfreetype6 zlib1g \
+              libcairo2 libpango-1.0-0 libdrm2 shared-mime-info libfuse2 grub-pc grub-efi-amd64 linux-image-amd64 systemd-sysv sudo
+
+          useradd -m -s /bin/bash -G sudo,audio,video,input,games kgamer
+          echo 'kgamer:kgamer' | chpasswd
+          echo 'root:root' | chpasswd
+          "
+
+          # --- PLYMOUTH AÇILIŞ ANİMASYONU ---
+          mkdir -p mnt/usr/share/plymouth/themes/retrogamer-boot || true
+          if [ -d "frames" ]; then
+              cp frames/frame_*.png mnt/usr/share/plymouth/themes/retrogamer-boot/ 2>/dev/null || true
+          fi
+
+          tee mnt/usr/share/plymouth/themes/retrogamer-boot/retrogamer-boot.plymouth << 'EOF' > /dev/null
+          [Plymouth Theme]
+          Name=Retrogamer Boot Animation
+          Description=Fullscreen Non-Closable 30FPS Animation ending at frame 150
+          ModuleName=script
+
+          [script]
+          ImageDir=/usr/share/plymouth/themes/retrogamer-boot
+          ScriptFile=/usr/share/plymouth/themes/retrogamer-boot/retrogamer-boot.script
+          EOF
+
+          tee mnt/usr/share/plymouth/themes/retrogamer-boot/retrogamer-boot.script << 'EOF' > /dev/null
+          anim_frames = 150;
+          for (i = 1; i <= anim_frames; i++) {
+              if (i < 10) { img_name = "frame_000" + i; }
+              else if (i < 100) { img_name = "frame_00" + i; }
+              else { img_name = "frame_0" + i; }
+              images[i] = Image(img_name + ".png");
+          }
+          framerate = 30;
+          my_sprite = Sprite();
+          screen_width = Window.GetWidth();
+          screen_height = Window.GetHeight();
+          fun refresh_callback () {
+              local.time = Plymouth.GetAnimationTime();
+              local.frame = Math.Int(local.time * framerate) + 1;
+              if (local.frame >= anim_frames) {
+                  local.frame = anim_frames;
+                  my_sprite.SetImage(images[local.frame]);
+                  Plymouth.Quit();
+                  return;
+              }
+              my_sprite.SetImage(images[local.frame]);
+          }
+          Plymouth.SetRefreshFunction (refresh_callback);
+          my_sprite.SetX(screen_width / 2 - images[1].GetWidth() / 2);
+          my_sprite.SetY(screen_height / 2 - images[1].GetHeight() / 2);
+          EOF
+
+          chroot mnt plymouth-set-default-theme -R retrogamer-boot || true
+          chroot mnt update-initramfs -u -k all || true
+
+          # --- RETROPIE KURULUMU ---
+          chroot mnt bash -c '
+          export DEBIAN_FRONTEND=noninteractive
+          mkdir -p /opt/kgamer
+          cd /opt/kgamer
+          if [ ! -d "RetroPie-Setup" ]; then
+              git clone --depth=1 https://github.com/RetroPie/RetroPie-Setup.git RetroPie-Setup || true
+          fi
+          cd RetroPie-Setup
+          export YES=1
+          ./retropie_packages.sh core setup_packages < /dev/null || true
+          ./retropie_packages.sh essentials < /dev/null || true
+          ./retropie_packages.sh emulationstation install < /dev/null || true
+          ./retropie_packages.sh retroarch install < /dev/null || true
+          ' || true
+
+          # --- GAMEPAD HELPER ---
+          mkdir -p mnt/opt/kgamer
+          tee mnt/opt/kgamer/gamepad-helper.sh << 'EOF' > /dev/null
+          #!/bin/bash
+          export TERM=linux
+          if pgrep -x "joy2key" > /dev/null; then exit 0; fi
+          JS_DEV=""
+          [ -e /dev/input/js0 ] && JS_DEV="/dev/input/js0"
+          [ -e /dev/input/js1 ] && JS_DEV="/dev/input/js1"
+          [ -n "$JS_DEV" ] && joy2key -dev "$JS_DEV" -keys 0x1c 0x1c 0x01 0x01 &>/dev/null &
+          EOF
+          chmod +x mnt/opt/kgamer/gamepad-helper.sh
+
+          chroot mnt bash -c '
+          export DEBIAN_FRONTEND=noninteractive
+          mkdir -p /opt/kgamer/apps /opt/kgamer/backup_apps
+          mkdir -p /home/kgamer/RetroPie/roms/apps /home/kgamer/RetroPie/roms/games /home/kgamer/RetroPie/roms/ports
+
+          cat << "EOF" > /opt/kgamer/apps/terminal.desktop
+          [Desktop Entry]
+          Name=XFCE Terminal
+          Comment=Command Line Terminal
+          Exec=xfce4-terminal
+          Icon=utilities-terminal
+          Terminal=false
+          Type=Application
+          Categories=System;Application;
+          EOF
+
+          cat << "EOF" > /opt/kgamer/apps/chromium.desktop
+          [Desktop Entry]
+          Name=Chromium Browser
+          Comment=Web Browser
+          Exec=chromium --no-sandbox
+          Icon=web-browser
+          Terminal=false
+          Type=Application
+          Categories=Network;
+          EOF
+
+          cat << "EOF" > /opt/kgamer/apps/pcmanfm.desktop
+          [Desktop Entry]
+          Name=File Manager (PCManFM)
+          Comment=Browse Files
+          Exec=pcmanfm
+          Icon=system-file-manager
+          Terminal=false
+          Type=Application
+          Categories=System;
+          EOF
+
+          cp -f /opt/kgamer/apps/*.desktop /opt/kgamer/backup_apps/ 2>/dev/null || true
+          chown -R kgamer:kgamer /home/kgamer/RetroPie 2>/dev/null || true
+          '
+
+          # --- SİSTEM DURUM MONİTÖRÜ ---
+          tee mnt/opt/kgamer/system-dashboard.sh << 'EOF' > /dev/null
+          #!/bin/bash
+          export DEBIAN_RELEASE="trixie"
+          export TERM=linux
+          /opt/kgamer/gamepad-helper.sh
+
+          while true; do
+              cpu_temp=$(cat /sys/class/thermal/thermal_zone0/temp 2>/dev/null | awk '{printf "%.1f°C", $1/1000}')
+              [ -z "$cpu_temp" ] && cpu_temp="N/A"
+
+              cpu_usage=$(top -bn1 | grep "Cpu(s)" | awk '{print 100 - $8"%"}')
+              [ -z "$cpu_usage" ] && cpu_usage="N/A"
+
+              if [ -f /sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq ]; then
+                  cpu_freq=$(awk '{printf "%.0f MHz", $1/1000}' /sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq)
+              else
+                  cpu_freq="N/A"
+              fi
+
+              cpu_arch=$(uname -m)
+              ram_info=$(free -h | grep Mem)
+              ram_total=$(echo "$ram_info" | awk '{print $2}')
+              ram_used=$(echo "$ram_info" | awk '{print $3}')
+              ram_free=$(echo "$ram_info" | awk '{print $4}')
+
+              disk_info=$(df -h / | tail -n 1)
+              disk_total=$(echo "$disk_info" | awk '{print $2}')
+              disk_used=$(echo "$disk_info" | awk '{print $3}')
+              disk_avail=$(echo "$disk_info" | awk '{print $4}')
+              disk_pct=$(echo "$disk_info" | awk '{print $5}')
+
+              uptime_str=$(uptime -p)
+
+              dialog --clear --title "RETROGAMER (trixie) - SYSTEM STATUS" \
+                  --msgbox "DEBIAN RELEASE : trixie ($cpu_arch)
+
+          CPU Temperature : $cpu_temp
+          CPU Usage       : $cpu_usage
+          CPU Clock Speed : $cpu_freq
+
+          MEMORY (RAM) STATUS
+          Total RAM       : $ram_total | Used: $ram_used | Free: $ram_free
+
+          STORAGE STATUS
+          Total Storage   : $disk_total | Used: $disk_used ($disk_pct)
+
+          SYSTEM RUNTIME
+          Uptime          : $uptime_str" 22 65
+              break
+          done
+          EOF
+          chmod +x mnt/opt/kgamer/system-dashboard.sh
+
+          tee mnt/home/kgamer/RetroPie/roms/ports/System-Dashboard.desktop << 'EOF' > /dev/null
+          [Desktop Entry]
+          Type=Application
+          Name=📊 System Status Dashboard
+          Comment=Check CPU temperature, RAM usage, and storage space
+          Exec=/opt/kgamer/system-dashboard.sh
+          Icon=utilities-system-monitor
+          Terminal=true
+          Categories=Settings;
+          EOF
+          chown kgamer:kgamer mnt/home/kgamer/RetroPie/roms/ports/System-Dashboard.desktop
+
+          # --- UYGULAMA FİLTRELEME SCRIPTİ ---
+          tee mnt/opt/kgamer/app-filter.sh << 'EOF' > /dev/null
+          #!/bin/bash
+          export DEBIAN_RELEASE="trixie"
+          /opt/kgamer/gamepad-helper.sh
+          APPS_SRC="/usr/share/applications"
+          APPS_DEST="/home/kgamer/RetroPie/roms/apps"
+          SPEC_FILE="/opt/kgamer/apps_filter.spec"
+
+          mkdir -p "$APPS_DEST"
+          desktop_files=()
+          while IFS= read -r file; do
+              if [ -f "$file" ]; then
+                  if grep -q "NoDisplay=true" "$file"; then continue; fi
+                  desktop_files+=("$file")
+              fi
+          done < <(find "$APPS_SRC" -name "*.desktop")
+
+          dialog_args=()
+          for file in "${desktop_files[@]}"; do
+              desktop_name=$(basename "$file")
+              app_title=$(grep -m 1 "^Name=" "$file" | cut -d '=' -f2-)
+              [ -z "$app_title" ] && app_title="$desktop_name"
+              status="ON"
+              if [ -f "$SPEC_FILE" ] && grep -q "$desktop_name:OFF" "$SPEC_FILE"; then status="OFF"; fi
+              dialog_args+=("$desktop_name" "$app_title" "$status")
+          done
+
+          CHOICES=$(dialog --clear --title "RETROGAMER (trixie) - APPS FILTER" \
+              --checklist "Select applications to show in EmulationStation APPS menu:" 22 70 12 \
+              "${dialog_args[@]}" 3>&1 1>&2 2>&3)
+          clear
+
+          visible_apps=()
+          for file in "${desktop_files[@]}"; do
+              desktop_name=$(basename "$file")
+              if echo "$CHOICES" | grep -q "\"$desktop_name\""; then visible_apps+=("$desktop_name"); fi
+          done
+
+          find "$APPS_DEST" -name "*.desktop" ! -name "00-Filter-Apps.desktop" -delete
+          > "$SPEC_FILE"
+          for desktop_name in "${desktop_files[@]}"; do
+              base_name=$(basename "$desktop_name")
+              if echo "$CHOICES" | grep -q "\"$base_name\""; then echo "$base_name:ON" >> "$SPEC_FILE"; else echo "$base_name:OFF" >> "$SPEC_FILE"; fi
+          done
+          for app in "${visible_apps[@]}"; do
+              ln -sf "$APPS_SRC/$app" "$APPS_DEST/$app"
+          done
+          dialog --msgbox "Application filter updated successfully for trixie!" 6 50
+          EOF
+          chmod +x mnt/opt/kgamer/app-filter.sh
+
+          tee mnt/home/kgamer/RetroPie/roms/apps/00-Filter-Apps.desktop << 'EOF' > /dev/null
+          [Desktop Entry]
+          Name=⚙️ Manage App Filters & Sorting
+          Comment=Select and sort apps visible in EmulationStation
+          Exec=/opt/kgamer/app-filter.sh
+          Icon=preferences-system
+          Terminal=true
+          Type=Application
+          Categories=System;
+          EOF
+
+          tee mnt/home/kgamer/RetroPie/roms/apps/RetroPie-Setup.desktop << 'EOF' > /dev/null
+          [Desktop Entry]
+          Type=Application
+          Name=RetroPie Setup Script
+          Comment=Configure RetroPie Core & Packages
+          Exec=sudo /opt/kgamer/RetroPie-Setup/retropie_setup.sh
+          Icon=system-run
+          Terminal=true
+          Categories=Settings;
+          EOF
+
+          # --- KONTROL MERKEZİ (`kgamer-setup.sh`) ---
+          tee mnt/opt/kgamer/kgamer-setup.sh << 'EOF' > /dev/null
+          #!/bin/bash
+          if [ "$EUID" -ne 0 ]; then exit 1; fi
+          export DEBIAN_RELEASE="trixie"
+          /opt/kgamer/gamepad-helper.sh
+
+          APPS_DIR="/opt/kgamer/apps"
+          BACKUP_APPS_DIR="/opt/kgamer/backup_apps"
+
+          configure_keyboard_layout() {
+              /opt/kgamer/gamepad-helper.sh
+              KB_CHOICE=$(dialog --clear --title "RETROGAMER (trixie) - KEYBOARD & LANGUAGE" \
+                  --menu "Select your keyboard layout / country:" 20 65 11 \
+                  "us" "English (US) - Standard QWERTY" \
+                  "uk" "English (UK)" \
+                  "tr" "Turkish (Q / F Choice)" \
+                  "de" "German (DE - QWERTZ)" \
+                  "fr" "French (FR - AZERTY)" \
+                  "es" "Spanish (ES)" \
+                  "it" "Italian (IT)" \
+                  "br" "Portuguese (Brazil)" \
+                  "jp" "Japanese (JP)" \
+                  "other" "Other Layout (Manual Code)" 3>&1 1>&2 2>&3)
+
+              if [ "$KB_CHOICE" = "tr" ]; then
+                  TR_VARIANT=$(dialog --clear --title "TURKISH KEYBOARD VARIANT" \
+                      --menu "Select Turkish keyboard type:" 10 50 2 \
+                      "q" "Turkish Q Klavye" \
+                      "f" "Turkish F Klavye" 3>&1 1>&2 2>&3)
+                  if [ "$TR_VARIANT" = "f" ]; then
+                      localectl set-x11-keymap tr pc105 f 2>/dev/null || true
+                      loadkeys trf 2>/dev/null || true
+                      dialog --msgbox "Keyboard updated to Turkish F (trixie)!" 5 50
+                  else
+                      localectl set-x11-keymap tr pc105 q 2>/dev/null || true
+                      loadkeys tr 2>/dev/null || true
+                      dialog --msgbox "Keyboard updated to Turkish Q (trixie)!" 5 50
+                  fi
+              elif [ -n "$KB_CHOICE" ] && [ "$KB_CHOICE" != "other" ]; then
+                  localectl set-x11-keymap "$KB_CHOICE" 2>/dev/null || true
+                  loadkeys "$KB_CHOICE" 2>/dev/null || true
+                  dialog --msgbox "Keyboard updated to $KB_CHOICE!" 5 50
+              fi
+          }
+
+          scan_and_manage_gamepads() {
+              /opt/kgamer/gamepad-helper.sh
+              while true; do
+                  found_pads=""
+                  index=1
+                  declare -A pad_paths
+                  for js in /dev/input/js*; do
+                      if [ -e "$js" ]; then
+                          pad_name=$(cat /sys/class/input/$(basename $js)/device/name 2>/dev/null || echo "Gamepad $index")
+                          found_pads="$found_pads $index \"$pad_name ($js)\" ON"
+                          pad_paths[$index]="$js"
+                          index=$((index + 1))
+                      fi
+                  done
+
+                  if [ -z "$found_pads" ]; then
+                      timeout 5 dialog --clear --title "RETROGAMER (trixie) - GAMEPADS" \
+                          --msgbox "No gamepads connected. Searching continuously...\n(Press ESC or Enter to return)" 7 50
+                      [ $? -ne 0 ] && break
+                  else
+                      exec 3>&1
+                      SUB_CHOICE=$(eval dialog --clear --title "RETROGAMER (trixie) - GAMEPADS" \
+                          --menu "Connected gamepads found. Select option:" 14 65 4 \
+                          "REFRESH" "🔄 Rescan Gamepads" \
+                          "DISCONNECT" "🔌 Disconnect Gamepad" \
+                          "BACK" "🔙 Back to Menu" $found_pads 2>&1 3>&-)
+                      exec 3>&-
+                      [ $? -ne 0 ] || [ "$SUB_CHOICE" = "BACK" ] && break
+                      [ "$SUB_CHOICE" = "DISCONNECT" ] && pkill -f "joy2key" || true
+                  fi
+              done
+          }
+
+          wifi_manager_menu() {
+              /opt/kgamer/gamepad-helper.sh
+              current_ip=$(hostname -I 2>/dev/null | awk '{print $1}')
+              [ -z "$current_ip" ] && current_ip="Not Connected"
+              WIFI_ACTION=$(dialog --clear --title "RETROGAMER (trixie) - WIFI" \
+                  --menu "Current IP: $current_ip\nSelect Action:" 15 60 3 \
+                  "1" "🔍 View IP Address" \
+                  "2" "❌ Disconnect Wi-Fi" \
+                  "3" "🔙 Back to Main Menu" 3>&1 1>&2 2>&3)
+              [ "$WIFI_ACTION" = "1" ] && dialog --msgbox "IP Address: $current_ip" 5 35
+              [ "$WIFI_ACTION" = "2" ] && nmcli dev disconnect wlan0 &>/dev/null || true
+          }
+
+          create_new_user_account() {
+              /opt/kgamer/gamepad-helper.sh
+              NEW_USER=$(dialog --clear --title "NEW USER (trixie)" --inputbox "Enter new username:" 8 50 3>&1 1>&2 2>&3)
+              [ -z "$NEW_USER" ] && return
+              NEW_PASS=$(dialog --clear --title "NEW USER PASSWORD" --passwordbox "Enter password for $NEW_USER:" 8 50 3>&1 1>&2 2>&3)
+              [ -z "$NEW_PASS" ] && return
+              useradd -m -s /bin/bash -G sudo,audio,video,input,games "$NEW_USER" 2>/dev/null
+              echo "$NEW_USER:$NEW_PASS" | chpasswd
+              dialog --msgbox "User '$NEW_USER' created successfully for trixie!" 5 50
+          }
+
+          edit_existing_user() {
+              /opt/kgamer/gamepad-helper.sh
+              TARGET_USER=$(dialog --clear --title "EDIT USER" --inputbox "Enter username to edit:" 8 50 "kgamer" 3>&1 1>&2 2>&3)
+              [ -z "$TARGET_USER" ] || ! id "$TARGET_USER" &>/dev/null && return
+              NEW_P=$(dialog --clear --title "CHANGE PASSWORD" --passwordbox "Enter new password for $TARGET_USER:" 8 50 3>&1 1>&2 2>&3)
+              [ -n "$NEW_P" ] && echo "$TARGET_USER:$NEW_P" | chpasswd && dialog --msgbox "Password updated!" 5 35
+          }
+
+          change_root_password() {
+              /opt/kgamer/gamepad-helper.sh
+              ROOT_P=$(dialog --passwordbox "Enter new ROOT password for trixie:" 8 50 3>&1 1>&2 2>&3)
+              [ -n "$ROOT_P" ] && echo "root:$ROOT_P" | chpasswd && dialog --msgbox "Root password updated!" 5 35
+          }
+
+          start_desktop_environment() {
+              clear
+              echo "[+] Openbox ve XFCE Paneli (trixie) başlatılıyor..."
+              export DISPLAY=:0
+              xfconf-query -c xfce4-panel -p /panels/panel-1/position -s "p=8;x=0;y=0" --create -t string 2>/dev/null || true
+              xfce4-panel --display=:0 &
+              exec openbox-session
+          }
+
+          if [ ! -f "/opt/kgamer/.keyboard_configured" ]; then
+              configure_keyboard_layout
+              touch "/opt/kgamer/.keyboard_configured"
+          fi
+
+          scan_and_manage_gamepads
+
+          while true; do
+              if [ ! -f "$APPS_DIR/terminal.desktop" ]; then
+                  mkdir -p "$APPS_DIR"
+                  cp -f "$BACKUP_APPS_DIR"/*.desktop "$APPS_DIR/" 2>/dev/null || true
+              fi
+
+              /opt/kgamer/gamepad-helper.sh
+              CHOICE=$(dialog --clear --title "RETROGAMER CONTROL CENTER (trixie)" \
+                  --menu "Select action (Use Arrows & Enter/ESC):" 20 65 9 \
+                  "1" "RETURN TO EMULATION STATION" \
+                  "2" "Open GUI Desktop (Openbox & XFCE Panel)" \
+                  "3" "Change Keyboard Layout & Language" \
+                  "4" "Gamepad Manager (Auto Scan & Disconnect)" \
+                  "5" "Wi-Fi Manager (Scan, IP, Forget & Auto-Connect)" \
+                  "6" "Create New User Account" \
+                  "7" "Edit Existing User (Name/Password)" \
+                  "8" "Change Root Password" \
+                  "9" "Exit / Shutdown" 3>&1 1>&2 2>&3)
+              case $CHOICE in
+                  1) clear; emulationstation ;;
+                  2) start_desktop_environment ;;
+                  3) configure_keyboard_layout ;;
+                  4) scan_and_manage_gamepads ;;
+                  5) wifi_manager_menu ;;
+                  6) create_new_user_account ;;
+                  7) edit_existing_user ;;
+                  8) change_root_password ;;
+                  9) clear; exit 0 ;;
+              esac
+          done
+          EOF
+          chmod +x mnt/opt/kgamer/kgamer-setup.sh
+
+          # --- ROM KLASÖRLERİNE KONTROL MERKEZİ KISAYOLU ---
+          ROMS_DIR="mnt/home/kgamer/RetroPie/roms"
+          if [ -d "$ROMS_DIR" ]; then
+              for rom_dir in "$ROMS_DIR"/*/; do
+                  if [ -d "$rom_dir" ]; then
+                      echo -e "#!/bin/bash\n/opt/kgamer/kgamer-setup.sh" > "${rom_dir}RETROGAMER-CONTROL-CENTER.sh"
+                      chmod +x "${rom_dir}RETROGAMER-CONTROL-CENTER.sh"
+                      echo -e "[Desktop Entry]\nType=Application\nName=RETROGAMER CONTROL CENTER\nExec=/opt/kgamer/kgamer-setup.sh\nIcon=gamepad\nTerminal=true" > "${rom_dir}RETROGAMER.desktop"
+                      chmod +x "${rom_dir}RETROGAMER.desktop"
+                  fi
+              done
+          fi
+
+          # --- SYSTEMD SERVİS TANIMLAMA ---
+          tee mnt/etc/systemd/system/kgamer-setup.service << 'EOF' > /dev/null
+          [Unit]
+          Description=RETROGAMER First Boot Auto Setup
+          After=network-online.target
+
+          [Service]
+          Type=simple
+          ExecStart=/bin/bash /opt/kgamer/kgamer-setup.sh
+          StandardInput=tty
+          StandardOutput=tty
+          TTYPath=/dev/tty1
+
+          [Install]
+          WantedBy=multi-user.target
+          EOF
+
+          chroot mnt systemctl enable kgamer-setup.service
+          chown -R kgamer:kgamer mnt/home/kgamer 2>/dev/null || true
+
+          # --- GRUB KURULUMU (BIOS & UEFI) ---
+          chroot mnt grub-install --target=i386-pc "$LOOP_DEV" || true
+          chroot mnt grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=DEBIAN --recheck || true
+          chroot mnt update-grub
+
+          # Temizlik ve Unmount İşlemleri
+          sync
+          umount mnt/dev/pts || true
+          umount mnt/dev || true
+          umount mnt/sys || true
+          umount mnt/proc || true
+          umount mnt/boot/efi || true
+          umount mnt || true
+
+          partx -d "$LOOP_DEV"
+          losetup -d "$LOOP_DEV"
+
+          zip "${IMG_FILE}.zip" "$IMG_FILE"
+
+      - name: Upload Final Bootable .IMG Artifact (Trixie Full Archive Ready)
+        uses: actions/upload-artifact@v4
+        with:
+          name: RETROGAMER-trixie-full-archive-IMG
+          path: RETROGAMER-trixie.img.zip
