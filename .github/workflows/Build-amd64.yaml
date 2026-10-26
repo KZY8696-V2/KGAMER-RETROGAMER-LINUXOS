@@ -1,4 +1,4 @@
-name: Build RETROGAMER AMD64 Bootable .IMG Image
+name: Build RETROGAMER AMD64 Bootable ISO Image
 
 on:
   push:
@@ -6,9 +6,9 @@ on:
   workflow_dispatch:
 
 jobs:
-  build-amd64-image:
+  build-amd64-iso:
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 180
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
@@ -27,84 +27,53 @@ jobs:
           done
           echo "Failed runs cleanup completed."
 
-      - name: Install Image Building Dependencies
+      - name: Install ISO Building Dependencies
         run: |
           [[ $EUID -ne 0 ]] && exec sudo /bin/bash "$0" "$@"
           rm -f /etc/apt/sources.list.d/microsoft*
           rm -f /etc/apt/trusted.gpg.d/microsoft*
 
           apt-get update
-          apt-get install -y parted kpartx debootstrap squashfs-tools genisoimage grub-pc-bin grub-efi-amd64-bin mtools dosfstools wget curl unzip zip e2fsprogs fdisk gdisk jstest-gtk joy2key xboxdrv git libfuse2
+          apt-get install -y debootstrap squashfs-tools genisoimage xorriso grub-pc-bin grub-efi-amd64-bin mtools dosfstools wget curl unzip zip e2fsprogs fdisk gdisk jstest-gtk joy2key xboxdrv git libfuse2 syslinux syslinux-common
 
-      - name: Build and Embed into AMD64 Debian Rootfs and Bootable IMG
+      - name: Build AMD64 Debian Bookworm Live ISO System (Full Component Manager & Full Scripts)
         run: |
           [[ $EUID -ne 0 ]] && exec sudo /bin/bash "$0" "$@"
           DEBIAN_CODENAME="bookworm"
-          echo "=== RETROGAMER AMD64 .IMG BUILD STARTED (FULL COMPONENT MANAGER) ==="
+          echo "=== RETROGAMER AMD64 LIVE ISO BUILD STARTED (FULL COMPONENT MANAGER) ==="
 
-          IMG_FILE="RETROGAMER-AMD64.img"
-          
-          # 6 GB Boş Disk İmajı Oluşturma
-          dd if=/dev/zero of="$IMG_FILE" bs=1M count=6144 status=progress
-
-          # GPT Disk Bölümleme (EFI Boot + RootFS)
-          parted -s "$IMG_FILE" mklabel gpt
-          parted -s "$IMG_FILE" mkpart primary fat32 1MiB 512MiB
-          parted -s "$IMG_FILE" set 1 esp on
-          parted -s "$IMG_FILE" mkpart primary ext4 512MiB 100%
-
-          LOOP_DEV=$(losetup --find --show "$IMG_FILE")
-          partx -a "$LOOP_DEV"
-          sleep 3
-
-          BOOT_PART="${LOOP_DEV}p1"
-          ROOT_PART="${LOOP_DEV}p2"
-
-          mkfs.vfat -F32 -n "EFI" "$BOOT_PART"
-          mkfs.ext4 -L "ROOTFS" "$ROOT_PART"
-
+          mkdir -p iso_root/live iso_root/boot/grub
           mkdir -p mnt
-          mount "$ROOT_PART" mnt
-          mkdir -p mnt/boot/efi
-          mount "$BOOT_PART" mnt/boot/efi
 
-          # Debian Bootstrap ile Temel Sistem Kurma
-          echo "Bootstrapping Debian $DEBIAN_CODENAME AMD64..."
+          # Debootstrap ile Debian Temel Sistemi Kurma
+          echo "Bootstrapping Debian $DEBIAN_CODENAME AMD64 for ISO..."
           debootstrap --arch=amd64 "$DEBIAN_CODENAME" mnt http://deb.debian.org/debian/
-
-          # Fstab Oluşturma
-          ROOT_UUID=$(blkid -s UUID -o value "$ROOT_PART")
-          BOOT_UUID=$(blkid -s UUID -o value "$BOOT_PART")
-
-          cat << EOF > mnt/etc/fstab
-          UUID=$ROOT_UUID  /               ext4    defaults,noatime  0       1
-          UUID=$BOOT_UUID  /boot/efi       vfat    defaults          0       2
-          EOF
 
           mount -t proc proc mnt/proc
           mount -t sysfs sysfs mnt/sys
           mount --bind /dev mnt/dev
           mount --bind /dev/pts mnt/dev/pts
 
-          chroot mnt bash -c "id -u kgamer &>/dev/null || useradd -m -s /bin/bash -G sudo,audio,video,input,games kgamer"
-          chroot mnt bash -c "echo 'kgamer:kgamer' | chpasswd"
-          chroot mnt bash -c "mkdir -p /home/kgamer && chown -R kgamer:kgamer /home/kgamer"
+          # --- CHROOT İÇİNDE KULLANICI VE TÜM PAKETLERİN KURULUMU ---
+          chroot mnt bash -c "
+          export DEBIAN_FRONTEND=noninteractive
+          id -u kgamer &>/dev/null || useradd -m -s /bin/bash -G sudo,audio,video,input,games kgamer
+          echo 'kgamer:kgamer' | chpasswd
+          echo 'root:root' | chpasswd
+          mkdir -p /home/kgamer
+          chown -R kgamer:kgamer /home/kgamer
 
-          chroot mnt apt-get update -y || true
-          
-          # --- DEBIAN STABİL DEPOSUNDAN PAKETLER ---
-          echo "=== Paketler kuruluyor ==="
-          chroot mnt apt-get install -y --no-install-recommends \
+          apt-get update
+          apt-get install -y --no-install-recommends \
               dialog git wget curl unzip xfce4-panel xfce4-terminal openbox xorg xserver-xorg \
               console-setup pcmanfm chromium libpcre2-8-0 jstest-gtk joy2key xboxdrv \
               bluetooth bluez bluez-tools network-manager wireless-tools wpasupplicant \
               desktop-file-utils plymouth plymouth-themes plymouth-label plymouth-x11 \
               libplymouth5 pix-plym-splash libgdk-pixbuf-2.0-0 libgtk-3-0 \
               libpng16-16 libpng-tools libjpeg62-turbo libfreetype6 zlib1g \
-              libcairo2 libpango-1.0-0 libdrm2 shared-mime-info libfuse2 grub-pc grub-efi-amd64 linux-image-amd64 systemd-sysv sudo || true
-
-          chroot mnt apt-get install -f -y || true
-          chroot mnt apt-get clean
+              libcairo2 libpango-1.0-0 libdrm2 shared-mime-info libfuse2 \
+              grub-pc-bin grub-efi-amd64-bin linux-image-amd64 systemd-sysv sudo live-boot live-config
+          "
 
           # --- PLYMOUTH TEMASI ---
           mkdir -p mnt/usr/share/plymouth/themes/retrogamer-boot || true
@@ -943,27 +912,41 @@ jobs:
           chroot mnt systemctl enable kgamer-setup.service
           chown -R kgamer:kgamer mnt/home/kgamer 2>/dev/null || true
 
-          # --- GRUB KURULUMU (AMD64 BIOS & UEFI) ---
-          chroot mnt grub-install --target=i386-pc "$LOOP_DEV" || true
-          chroot mnt grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=DEBIAN --recheck || true
-          chroot mnt update-grub
+          # Kernel vmlinuz ve initrd kopyalama (ISO boot için)
+          cp mnt/boot/vmlinuz-* iso_root/live/vmlinuz || cp mnt/vmlinuz iso_root/live/vmlinuz || true
+          cp mnt/boot/initrd.img-* iso_root/live/initrd.img || cp mnt/initrd.img iso_root/live/initrd.img || true
 
-          sync
+          # Squashfs Dosya Sistemini Oluşturma
+          mksquashfs mnt iso_root/live/filesystem.squashfs -comp xz -b 1M -e boot
+
           umount mnt/dev/pts || true
           umount mnt/dev || true
           umount mnt/sys || true
           umount mnt/proc || true
-          umount mnt/boot/efi || true
           umount mnt || true
 
-          partx -d "$LOOP_DEV"
-          losetup -d "$LOOP_DEV"
+          # GRUB ve ISO Yapılandırması
+          tee iso_root/boot/grub/grub.cfg << 'EOF' > /dev/null
+          set timeout=5
+          set default=0
+          menuentry "RETROGAMER Live AMD64" {
+              linux /live/vmlinuz boot=live quiet
+              initrd /live/initrd.img
+          }
+          EOF
 
-          mv "$IMG_FILE" RETROGAMER-AMD64.img
-          zip RETROGAMER-AMD64.img.zip RETROGAMER-AMD64.img
+          # Genisoimage ile Boot Edilebilir ISO Oluşturma
+          genisoimage -o RETROGAMER-AMD64-LIVE.iso \
+              -b boot/grub/i386-pc/eltorito.img \
+              -no-emul-boot -boot-load-size 4 -boot-info-table \
+              -eltorito-alt-boot \
+              -e boot/grub/efi.img -no-emul-boot \
+              iso_root/ || genisoimage -o RETROGAMER-AMD64-LIVE.iso -R -J iso_root/
 
-      - name: Upload Final Bootable .IMG Artifact
+          zip RETROGAMER-AMD64-LIVE.iso.zip RETROGAMER-AMD64-LIVE.iso
+
+      - name: Upload Final Bootable ISO Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: RETROGAMER-AMD64-IMG
-          path: RETROGAMER-AMD64.img.zip
+          name: RETROGAMER-AMD64-ISO
+          path: RETROGAMER-AMD64-LIVE.iso.zip
