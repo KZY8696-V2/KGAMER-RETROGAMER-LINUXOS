@@ -916,14 +916,15 @@ jobs:
           cp mnt/boot/vmlinuz-* iso_root/live/vmlinuz || cp mnt/vmlinuz iso_root/live/vmlinuz || true
           cp mnt/boot/initrd.img-* iso_root/live/initrd.img || cp mnt/initrd.img iso_root/live/initrd.img || true
 
-          # Squashfs Dosya Sistemini Oluşturma
-          mksquashfs mnt iso_root/live/filesystem.squashfs -comp xz -b 1M -e boot
-
+          # Sanal ve bağlanan dosya sistemlerini güvenli bir şekilde unmount etme
           umount mnt/dev/pts || true
           umount mnt/dev || true
           umount mnt/sys || true
           umount mnt/proc || true
           umount mnt || true
+
+          # Squashfs Dosya Sistemini Oluşturma (Sanal proc, sys, dev dizinlerini hariç tutarak)
+          mksquashfs mnt iso_root/live/filesystem.squashfs -comp xz -b 1M -e proc sys dev run boot
 
           # GRUB ve ISO Yapılandırması
           tee iso_root/boot/grub/grub.cfg << 'EOF' > /dev/null
