@@ -36,11 +36,11 @@ jobs:
           apt-get update
           apt-get install -y debootstrap squashfs-tools genisoimage xorriso grub-pc-bin grub-efi-amd64-bin mtools dosfstools wget curl unzip zip e2fsprogs fdisk gdisk jstest-gtk joy2key xboxdrv git libfuse2 syslinux syslinux-common
 
-      - name: Build AMD64 Debian Bookworm Live ISO System (Full Component Manager & Full Scripts)
+      - name: Build AMD64 Debian Bookworm Live ISO System (Reinstall Only Policy)
         run: |
           [[ $EUID -ne 0 ]] && exec sudo /bin/bash "$0" "$@"
           DEBIAN_CODENAME="bookworm"
-          echo "=== RETROGAMER AMD64 LIVE ISO BUILD STARTED (FULL COMPONENT MANAGER) ==="
+          echo "=== RETROGAMER AMD64 LIVE ISO BUILD STARTED (REINSTALL ONLY) ==="
 
           mkdir -p iso_root/live iso_root/boot/grub
           mkdir -p mnt
@@ -402,7 +402,7 @@ jobs:
           Categories=Settings;
           EOF
 
-          # --- KONTROL MERKEZİ SCRIPTİ (`kgamer-setup.sh`) ---
+          # --- KONTROL MERKEZİ SCRIPTİ (`kgamer-setup.sh` - SADECE REINSTALL KURALI) ---
           tee mnt/opt/kgamer/kgamer-setup.sh << 'EOF' > /dev/null
           #!/bin/bash
           if [ "$EUID" -ne 0 ]; then
@@ -696,9 +696,9 @@ jobs:
 
           component_manager_menu() {
               while true; do
-                  COMP_CHOICE=$(dialog --clear --title "COMPONENT INSTALLER & REINSTALLER" \
-                      --menu "Select a component to install or reinstall via APT / GitHub:" 20 65 10 \
-                      "1" "🔄 Reinstall RetroPie & Setup Script (GitHub)" \
+                  COMP_CHOICE=$(dialog --clear --title "COMPONENT REINSTALLER (NO REMOVAL ALLOWED)" \
+                      --menu "Select a component to REINSTALL / REFRESH safely:" 20 65 10 \
+                      "1" "🔄 Reinstall RetroPie & Setup Script (GitHub Update)" \
                       "2" "📦 Reinstall Desktop Environment (XFCE Panel, Openbox, Xorg)" \
                       "3" "🌐 Reinstall Web & File Tools (Chromium, PCManFM)" \
                       "4" "🎮 Reinstall Gamepad & Input Helpers (joy2key, xboxdrv, jstest-gtk)" \
@@ -706,13 +706,13 @@ jobs:
                       "6" "🎨 Reinstall Plymouth Boot Animation Theme" \
                       "7" "🛠️ Reinstall System Utilities & CLI Tools (dialog, git, wget, curl, unzip, FUSE)" \
                       "8" "⚙️ Reinstall Core Libraries & Fonts (libpng, freetype, zlib, cairo, pango)" \
-                      "9" "📦 Reinstall ALL Base Packages (Full APT Reinstall)" \
+                      "9" "📦 Reinstall ALL Base Packages (Full Safe APT Reinstall)" \
                       "10" "🔙 Return to Main Control Center" 3>&1 1>&2 2>&3)
                   
                   case $COMP_CHOICE in
                       1)
                           clear
-                          echo "=== Reinstalling RetroPie Setup & Core Packages ==="
+                          echo "=== Reinstalling & Refreshing RetroPie Setup & Core Packages ==="
                           cd /opt/kgamer
                           rm -rf RetroPie-Setup
                           git clone --depth=1 https://github.com/RetroPie/RetroPie-Setup.git RetroPie-Setup
@@ -723,7 +723,7 @@ jobs:
                           sudo ./retropie_packages.sh essentials < /dev/null || true
                           sudo ./retropie_packages.sh emulationstation install < /dev/null || true
                           sudo ./retropie_packages.sh retroarch install < /dev/null || true
-                          read -p "Press Enter to continue..."
+                          read -p "Reinstall completed. Press Enter to continue..."
                           ;;
                       2)
                           clear
@@ -731,7 +731,7 @@ jobs:
                           export DEBIAN_FRONTEND=noninteractive
                           sudo apt-get update
                           sudo apt-get install --reinstall -y xfce4-panel xfce4-terminal openbox xorg xserver-xorg desktop-file-utils
-                          read -p "Press Enter to continue..."
+                          read -p "Reinstall completed. Press Enter to continue..."
                           ;;
                       3)
                           clear
@@ -739,7 +739,7 @@ jobs:
                           export DEBIAN_FRONTEND=noninteractive
                           sudo apt-get update
                           sudo apt-get install --reinstall -y chromium pcmanfm
-                          read -p "Press Enter to continue..."
+                          read -p "Reinstall completed. Press Enter to continue..."
                           ;;
                       4)
                           clear
@@ -747,7 +747,7 @@ jobs:
                           export DEBIAN_FRONTEND=noninteractive
                           sudo apt-get update
                           sudo apt-get install --reinstall -y joy2key xboxdrv jstest-gtk
-                          read -p "Press Enter to continue..."
+                          read -p "Reinstall completed. Press Enter to continue..."
                           ;;
                       5)
                           clear
@@ -755,7 +755,7 @@ jobs:
                           export DEBIAN_FRONTEND=noninteractive
                           sudo apt-get update
                           sudo apt-get install --reinstall -y bluetooth bluez bluez-tools network-manager wireless-tools wpasupplicant
-                          read -p "Press Enter to continue..."
+                          read -p "Reinstall completed. Press Enter to continue..."
                           ;;
                       6)
                           clear
@@ -765,7 +765,7 @@ jobs:
                           sudo apt-get install --reinstall -y plymouth plymouth-themes plymouth-label plymouth-x11 libplymouth5 pix-plym-splash
                           sudo plymouth-set-default-theme -R retrogamer-boot || true
                           sudo update-initramfs -u -k all || true
-                          read -p "Press Enter to continue..."
+                          read -p "Reinstall completed. Press Enter to continue..."
                           ;;
                       7)
                           clear
@@ -773,7 +773,7 @@ jobs:
                           export DEBIAN_FRONTEND=noninteractive
                           sudo apt-get update
                           sudo apt-get install --reinstall -y dialog git wget curl unzip console-setup libfuse2 sudo
-                          read -p "Press Enter to continue..."
+                          read -p "Reinstall completed. Press Enter to continue..."
                           ;;
                       8)
                           clear
@@ -781,11 +781,11 @@ jobs:
                           export DEBIAN_FRONTEND=noninteractive
                           sudo apt-get update
                           sudo apt-get install --reinstall -y libpcre2-8-0 libgdk-pixbuf-2.0-0 libgtk-3-0 libpng16-16 libpng-tools libjpeg62-turbo libfreetype6 zlib1g libcairo2 libpango-1.0-0 libdrm2 shared-mime-info
-                          read -p "Press Enter to continue..."
+                          read -p "Reinstall completed. Press Enter to continue..."
                           ;;
                       9)
                           clear
-                          echo "=== Reinstalling ALL Base System & Game Packages ==="
+                          echo "=== Reinstalling ALL Base System & Game Packages (Safe Reinstall) ==="
                           export DEBIAN_FRONTEND=noninteractive
                           sudo apt-get update
                           sudo apt-get install --reinstall -y \
@@ -796,7 +796,7 @@ jobs:
                               libplymouth5 pix-plym-splash libgdk-pixbuf-2.0-0 libgtk-3-0 \
                               libpng16-16 libpng-tools libjpeg62-turbo libfreetype6 zlib1g \
                               libcairo2 libpango-1.0-0 libdrm2 shared-mime-info libfuse2 grub-pc grub-efi-amd64 sudo
-                          read -p "Press Enter to continue..."
+                          read -p "Reinstall completed. Press Enter to continue..."
                           ;;
                       10|*)
                           break
@@ -846,7 +846,7 @@ jobs:
                   "7" "Edit Existing User (Name/Password)" \
                   "8" "Change Root Password" \
                   "9" "Open RetroPie Setup Script" \
-                  "10" "📦 Component Installer & Reinstaller (APT & GitHub)" \
+                  "10" "📦 Component Reinstaller (No Removal - Safe Refresh)" \
                   "11" "Exit / Restart / Shutdown" 3>&1 1>&2 2>&3)
               case $CHOICE in
                   1) clear; emulationstation ;;
