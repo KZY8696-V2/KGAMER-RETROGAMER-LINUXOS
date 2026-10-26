@@ -40,7 +40,7 @@ jobs:
         run: |
           [[ $EUID -ne 0 ]] && exec sudo /bin/bash "$0" "$@"
           DEBIAN_CODENAME="bookworm"
-          echo "=== RETROGAMER AMD64 .IMG BUILD STARTED (FULL GAMEPAD & DIALOG SYNC) ==="
+          echo "=== RETROGAMER AMD64 .IMG BUILD STARTED (FULL COMPONENT MANAGER) ==="
 
           IMG_FILE="RETROGAMER-AMD64.img"
           
@@ -74,7 +74,7 @@ jobs:
 
           # Fstab Oluşturma
           ROOT_UUID=$(blkid -s UUID -o value "$ROOT_PART")
-          BOOT_UUID=$(blkid -s UUID -o value "$ROOT_PART")
+          BOOT_UUID=$(blkid -s UUID -o value "$BOOT_PART")
 
           cat << EOF > mnt/etc/fstab
           UUID=$ROOT_UUID  /               ext4    defaults,noatime  0       1
@@ -110,7 +110,7 @@ jobs:
           mkdir -p mnt/usr/share/plymouth/themes/retrogamer-boot || true
 
           if [ -d "frames" ]; then
-              cp frames/frame_*.png mnt/usr/share/plymouth/themes/retrogamer-boot/ 2>/dev/null || true
+              cp frames/frame_*.png mnt/usr/share/plymouth/themes/retrogamer-boot/ || true
           fi
 
           tee mnt/usr/share/plymouth/themes/retrogamer-boot/retrogamer-boot.plymouth << 'EOF' > /dev/null
@@ -164,7 +164,7 @@ jobs:
           chroot mnt plymouth-set-default-theme -R retrogamer-boot || true
           chroot mnt update-initramfs -u -k all || true
 
-          # RetroPie Kurulumu ve Gömülü Setup Script Hazırlığı
+          # --- CHROOT İÇİNDE RETROPIE İLK KURULUMU (BUILD TIME) ---
           chroot mnt bash -c '
           export DEBIAN_FRONTEND=noninteractive
           mkdir -p /opt/kgamer
@@ -718,11 +718,122 @@ jobs:
 
           run_retropie_setup() {
               clear
-              echo "[+] RetroPie Setup Script başlatılıyor..."
+              echo "[+] RetroPie Setup Script açılıyor..."
               cd /opt/kgamer/RetroPie-Setup
               sudo ./retropie_packages.sh
               echo ""
               read -p "Press Enter to return to RETROGAMER Control Center..."
+          }
+
+          component_manager_menu() {
+              while true; do
+                  COMP_CHOICE=$(dialog --clear --title "COMPONENT INSTALLER & REINSTALLER" \
+                      --menu "Select a component to install or reinstall via APT / GitHub:" 20 65 10 \
+                      "1" "🔄 Reinstall RetroPie & Setup Script (GitHub)" \
+                      "2" "📦 Reinstall Desktop Environment (XFCE Panel, Openbox, Xorg)" \
+                      "3" "🌐 Reinstall Web & File Tools (Chromium, PCManFM)" \
+                      "4" "🎮 Reinstall Gamepad & Input Helpers (joy2key, xboxdrv, jstest-gtk)" \
+                      "5" "📶 Reinstall Connectivity Tools (Bluez, Network-Manager, Wpasupplicant)" \
+                      "6" "🎨 Reinstall Plymouth Boot Animation Theme" \
+                      "7" "🛠️ Reinstall System Utilities & CLI Tools (dialog, git, wget, curl, unzip, FUSE)" \
+                      "8" "⚙️ Reinstall Core Libraries & Fonts (libpng, freetype, zlib, cairo, pango)" \
+                      "9" "📦 Reinstall ALL Base Packages (Full APT Reinstall)" \
+                      "10" "🔙 Return to Main Control Center" 3>&1 1>&2 2>&3)
+                  
+                  case $COMP_CHOICE in
+                      1)
+                          clear
+                          echo "=== Reinstalling RetroPie Setup & Core Packages ==="
+                          cd /opt/kgamer
+                          rm -rf RetroPie-Setup
+                          git clone --depth=1 https://github.com/RetroPie/RetroPie-Setup.git RetroPie-Setup
+                          cd RetroPie-Setup
+                          export YES=1
+                          export DEBIAN_FRONTEND=noninteractive
+                          sudo ./retropie_packages.sh core setup_packages < /dev/null || true
+                          sudo ./retropie_packages.sh essentials < /dev/null || true
+                          sudo ./retropie_packages.sh emulationstation install < /dev/null || true
+                          sudo ./retropie_packages.sh retroarch install < /dev/null || true
+                          read -p "Press Enter to continue..."
+                          ;;
+                      2)
+                          clear
+                          echo "=== Reinstalling Desktop Environments (XFCE & Openbox) ==="
+                          export DEBIAN_FRONTEND=noninteractive
+                          sudo apt-get update
+                          sudo apt-get install --reinstall -y xfce4-panel xfce4-terminal openbox xorg xserver-xorg desktop-file-utils
+                          read -p "Press Enter to continue..."
+                          ;;
+                      3)
+                          clear
+                          echo "=== Reinstalling Chromium & PCManFM ==="
+                          export DEBIAN_FRONTEND=noninteractive
+                          sudo apt-get update
+                          sudo apt-get install --reinstall -y chromium pcmanfm
+                          read -p "Press Enter to continue..."
+                          ;;
+                      4)
+                          clear
+                          echo "=== Reinstalling Gamepad & Input Helpers ==="
+                          export DEBIAN_FRONTEND=noninteractive
+                          sudo apt-get update
+                          sudo apt-get install --reinstall -y joy2key xboxdrv jstest-gtk
+                          read -p "Press Enter to continue..."
+                          ;;
+                      5)
+                          clear
+                          echo "=== Reinstalling Network & Bluetooth Tools ==="
+                          export DEBIAN_FRONTEND=noninteractive
+                          sudo apt-get update
+                          sudo apt-get install --reinstall -y bluetooth bluez bluez-tools network-manager wireless-tools wpasupplicant
+                          read -p "Press Enter to continue..."
+                          ;;
+                      6)
+                          clear
+                          echo "=== Reinstalling Plymouth Boot Animation ==="
+                          export DEBIAN_FRONTEND=noninteractive
+                          sudo apt-get update
+                          sudo apt-get install --reinstall -y plymouth plymouth-themes plymouth-label plymouth-x11 libplymouth5 pix-plym-splash
+                          sudo plymouth-set-default-theme -R retrogamer-boot || true
+                          sudo update-initramfs -u -k all || true
+                          read -p "Press Enter to continue..."
+                          ;;
+                      7)
+                          clear
+                          echo "=== Reinstalling System Utilities & CLI Tools ==="
+                          export DEBIAN_FRONTEND=noninteractive
+                          sudo apt-get update
+                          sudo apt-get install --reinstall -y dialog git wget curl unzip console-setup libfuse2 sudo
+                          read -p "Press Enter to continue..."
+                          ;;
+                      8)
+                          clear
+                          echo "=== Reinstalling Core Libraries & Graphics/Fonts ==="
+                          export DEBIAN_FRONTEND=noninteractive
+                          sudo apt-get update
+                          sudo apt-get install --reinstall -y libpcre2-8-0 libgdk-pixbuf-2.0-0 libgtk-3-0 libpng16-16 libpng-tools libjpeg62-turbo libfreetype6 zlib1g libcairo2 libpango-1.0-0 libdrm2 shared-mime-info
+                          read -p "Press Enter to continue..."
+                          ;;
+                      9)
+                          clear
+                          echo "=== Reinstalling ALL Base System & Game Packages ==="
+                          export DEBIAN_FRONTEND=noninteractive
+                          sudo apt-get update
+                          sudo apt-get install --reinstall -y \
+                              dialog git wget curl unzip xfce4-panel xfce4-terminal openbox xorg xserver-xorg \
+                              console-setup pcmanfm chromium libpcre2-8-0 jstest-gtk joy2key xboxdrv \
+                              bluetooth bluez bluez-tools network-manager wireless-tools wpasupplicant \
+                              desktop-file-utils plymouth plymouth-themes plymouth-label plymouth-x11 \
+                              libplymouth5 pix-plym-splash libgdk-pixbuf-2.0-0 libgtk-3-0 \
+                              libpng16-16 libpng-tools libjpeg62-turbo libfreetype6 zlib1g \
+                              libcairo2 libpango-1.0-0 libdrm2 shared-mime-info libfuse2 grub-pc grub-efi-amd64 sudo
+                          read -p "Press Enter to continue..."
+                          ;;
+                      10|*)
+                          break
+                          ;;
+                  esac
+              done
           }
 
           shutdown_restart_menu() {
@@ -766,7 +877,8 @@ jobs:
                   "7" "Edit Existing User (Name/Password)" \
                   "8" "Change Root Password" \
                   "9" "Open RetroPie Setup Script" \
-                  "10" "Exit / Restart / Shutdown" 3>&1 1>&2 2>&3)
+                  "10" "📦 Component Installer & Reinstaller (APT & GitHub)" \
+                  "11" "Exit / Restart / Shutdown" 3>&1 1>&2 2>&3)
               case $CHOICE in
                   1) clear; emulationstation ;;
                   2) start_desktop_environment ;;
@@ -777,7 +889,8 @@ jobs:
                   7) edit_existing_user ;;
                   8) change_root_password ;;
                   9) run_retropie_setup ;;
-                  10) shutdown_restart_menu ;;
+                  10) component_manager_menu ;;
+                  11) shutdown_restart_menu ;;
               esac
           done
           EOF
