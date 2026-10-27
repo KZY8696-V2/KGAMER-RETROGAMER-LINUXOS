@@ -36,11 +36,11 @@ jobs:
           apt-get update
           apt-get install -y debootstrap squashfs-tools genisoimage xorriso grub-pc-bin grub-efi-amd64-bin mtools dosfstools wget curl unzip zip e2fsprogs fdisk gdisk jstest-gtk joy2key xboxdrv git libfuse2 syslinux syslinux-common
 
-      - name: Build AMD64 Debian Bookworm Live ISO System (No Plymouth)
+      - name: Build AMD64 Debian Bookworm Live ISO System (Fixed User & Chroot Issues)
         run: |
           [[ $EUID -ne 0 ]] && exec sudo /bin/bash "$0" "$@"
           DEBIAN_CODENAME="bookworm"
-          echo "=== RETROGAMER AMD64 LIVE ISO BUILD STARTED (NO PLYMOUTH) ==="
+          echo "=== RETROGAMER AMD64 LIVE ISO BUILD STARTED ==="
 
           mkdir -p iso_root/live iso_root/boot/grub
           mkdir -p mnt
@@ -54,7 +54,7 @@ jobs:
           mount --bind /dev mnt/dev
           mount --bind /dev/pts mnt/dev/pts
 
-          # --- CHROOT İÇİNDE KULLANICI VE TÜM PAKETLERİN KURULUMU (PLYMOUTH YOK) ---
+          # --- 1. ÖNCE KULLANICIYI OLUŞTUR VE PAKETLERİ KUR ---
           chroot mnt bash -c "
           export DEBIAN_FRONTEND=noninteractive
           id -u kgamer &>/dev/null || useradd -m -s /bin/bash -G sudo,audio,video,input,games kgamer
@@ -74,7 +74,7 @@ jobs:
               grub-pc-bin grub-efi-amd64-bin linux-image-amd64 systemd-sysv sudo live-boot live-config ca-certificates
           "
 
-          # --- CHROOT İÇİNDE RETROPIE İLK KURULUMU (BUILD TIME) ---
+          # --- 2. CHROOT İÇİNDE RETROPIE KURULUMU ---
           chroot mnt bash -c '
           export DEBIAN_FRONTEND=noninteractive
           mkdir -p /opt/kgamer
