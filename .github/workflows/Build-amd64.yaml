@@ -36,11 +36,11 @@ jobs:
           apt-get update
           apt-get install -y debootstrap squashfs-tools genisoimage xorriso grub-pc-bin grub-efi-amd64-bin mtools dosfstools wget curl unzip zip e2fsprogs fdisk gdisk jstest-gtk joy2key xboxdrv git libfuse2 syslinux syslinux-common
 
-      - name: Build AMD64 Debian Bookworm Live ISO System (Reinstall Only Policy)
+      - name: Build AMD64 Debian Bookworm Live ISO System (No Plymouth)
         run: |
           [[ $EUID -ne 0 ]] && exec sudo /bin/bash "$0" "$@"
           DEBIAN_CODENAME="bookworm"
-          echo "=== RETROGAMER AMD64 LIVE ISO BUILD STARTED (REINSTALL ONLY) ==="
+          echo "=== RETROGAMER AMD64 LIVE ISO BUILD STARTED (NO PLYMOUTH) ==="
 
           mkdir -p iso_root/live iso_root/boot/grub
           mkdir -p mnt
@@ -54,7 +54,7 @@ jobs:
           mount --bind /dev mnt/dev
           mount --bind /dev/pts mnt/dev/pts
 
-          # --- CHROOT İÇİNDE KULLANICI VE TÜM PAKETLERİN KURULUMU ---
+          # --- CHROOT İÇİNDE KULLANICI VE TÜM PAKETLERİN KURULUMU (PLYMOUTH YOK) ---
           chroot mnt bash -c "
           export DEBIAN_FRONTEND=noninteractive
           id -u kgamer &>/dev/null || useradd -m -s /bin/bash -G sudo,audio,video,input,games kgamer
@@ -68,70 +68,11 @@ jobs:
               dialog git wget curl unzip xfce4-panel xfce4-terminal openbox xorg xserver-xorg \
               console-setup pcmanfm chromium libpcre2-8-0 jstest-gtk joy2key xboxdrv \
               bluetooth bluez bluez-tools network-manager wireless-tools wpasupplicant \
-              desktop-file-utils plymouth plymouth-themes plymouth-label plymouth-x11 \
-              libplymouth5 pix-plym-splash libgdk-pixbuf-2.0-0 libgtk-3-0 \
+              desktop-file-utils libgdk-pixbuf-2.0-0 libgtk-3-0 \
               libpng16-16 libpng-tools libjpeg62-turbo libfreetype6 zlib1g \
               libcairo2 libpango-1.0-0 libdrm2 shared-mime-info libfuse2 \
-              grub-pc-bin grub-efi-amd64-bin linux-image-amd64 systemd-sysv sudo live-boot live-config
+              grub-pc-bin grub-efi-amd64-bin linux-image-amd64 systemd-sysv sudo live-boot live-config ca-certificates
           "
-
-          # --- PLYMOUTH TEMASI ---
-          mkdir -p mnt/usr/share/plymouth/themes/retrogamer-boot || true
-
-          if [ -d "frames" ]; then
-              cp frames/frame_*.png mnt/usr/share/plymouth/themes/retrogamer-boot/ || true
-          fi
-
-          tee mnt/usr/share/plymouth/themes/retrogamer-boot/retrogamer-boot.plymouth << 'EOF' > /dev/null
-          [Plymouth Theme]
-          Name=Retrogamer Boot Animation
-          Description=Fullscreen Non-Closable 30FPS Animation ending at frame 150
-          ModuleName=script
-
-          [script]
-          ImageDir=/usr/share/plymouth/themes/retrogamer-boot
-          ScriptFile=/usr/share/plymouth/themes/retrogamer-boot/retrogamer-boot.script
-          EOF
-
-          tee mnt/usr/share/plymouth/themes/retrogamer-boot/retrogamer-boot.script << 'EOF' > /dev/null
-          anim_frames = 150;
-          for (i = 1; i <= anim_frames; i++) {
-              if (i < 10) {
-                  img_name = "frame_000" + i;
-              } else if (i < 100) {
-                  img_name = "frame_00" + i;
-              } else {
-                  img_name = "frame_0" + i;
-              }
-              images[i] = Image(img_name + ".png");
-          }
-
-          framerate = 30;
-          my_sprite = Sprite();
-          screen_width = Window.GetWidth();
-          screen_height = Window.GetHeight();
-
-          fun refresh_callback () {
-              local.time = Plymouth.GetAnimationTime();
-              local.frame = Math.Int(local.time * framerate) + 1;
-              
-              if (local.frame >= anim_frames) {
-                  local.frame = anim_frames;
-                  my_sprite.SetImage(images[local.frame]);
-                  Plymouth.Quit();
-                  return;
-              }
-              my_sprite.SetImage(images[local.frame]);
-          }
-
-          Plymouth.SetRefreshFunction (refresh_callback);
-
-          my_sprite.SetX(screen_width / 2 - images[1].GetWidth() / 2);
-          my_sprite.SetY(screen_height / 2 - images[1].GetHeight() / 2);
-          EOF
-
-          chroot mnt plymouth-set-default-theme -R retrogamer-boot || true
-          chroot mnt update-initramfs -u -k all || true
 
           # --- CHROOT İÇİNDE RETROPIE İLK KURULUMU (BUILD TIME) ---
           chroot mnt bash -c '
@@ -402,7 +343,7 @@ jobs:
           Categories=Settings;
           EOF
 
-          # --- KONTROL MERKEZİ SCRIPTİ (`kgamer-setup.sh` - SADECE REINSTALL KURALI) ---
+          # --- KONTROL MERKEZİ SCRIPTİ (`kgamer-setup.sh`) ---
           tee mnt/opt/kgamer/kgamer-setup.sh << 'EOF' > /dev/null
           #!/bin/bash
           if [ "$EUID" -ne 0 ]; then
@@ -703,11 +644,10 @@ jobs:
                       "3" "🌐 Reinstall Web & File Tools (Chromium, PCManFM)" \
                       "4" "🎮 Reinstall Gamepad & Input Helpers (joy2key, xboxdrv, jstest-gtk)" \
                       "5" "📶 Reinstall Connectivity Tools (Bluez, Network-Manager, Wpasupplicant)" \
-                      "6" "🎨 Reinstall Plymouth Boot Animation Theme" \
-                      "7" "🛠️ Reinstall System Utilities & CLI Tools (dialog, git, wget, curl, unzip, FUSE)" \
-                      "8" "⚙️ Reinstall Core Libraries & Fonts (libpng, freetype, zlib, cairo, pango)" \
-                      "9" "📦 Reinstall ALL Base Packages (Full Safe APT Reinstall)" \
-                      "10" "🔙 Return to Main Control Center" 3>&1 1>&2 2>&3)
+                      "6" "🛠️ Reinstall System Utilities & CLI Tools (dialog, git, wget, curl, unzip, FUSE)" \
+                      "7" "⚙️ Reinstall Core Libraries & Fonts (libpng, freetype, zlib, cairo, pango)" \
+                      "8" "📦 Reinstall ALL Base Packages (Full Safe APT Reinstall)" \
+                      "9" "🔙 Return to Main Control Center" 3>&1 1>&2 2>&3)
                   
                   case $COMP_CHOICE in
                       1)
@@ -759,23 +699,13 @@ jobs:
                           ;;
                       6)
                           clear
-                          echo "=== Reinstalling Plymouth Boot Animation ==="
-                          export DEBIAN_FRONTEND=noninteractive
-                          sudo apt-get update
-                          sudo apt-get install --reinstall -y plymouth plymouth-themes plymouth-label plymouth-x11 libplymouth5 pix-plym-splash
-                          sudo plymouth-set-default-theme -R retrogamer-boot || true
-                          sudo update-initramfs -u -k all || true
-                          read -p "Reinstall completed. Press Enter to continue..."
-                          ;;
-                      7)
-                          clear
                           echo "=== Reinstalling System Utilities & CLI Tools ==="
                           export DEBIAN_FRONTEND=noninteractive
                           sudo apt-get update
                           sudo apt-get install --reinstall -y dialog git wget curl unzip console-setup libfuse2 sudo
                           read -p "Reinstall completed. Press Enter to continue..."
                           ;;
-                      8)
+                      7)
                           clear
                           echo "=== Reinstalling Core Libraries & Graphics/Fonts ==="
                           export DEBIAN_FRONTEND=noninteractive
@@ -783,7 +713,7 @@ jobs:
                           sudo apt-get install --reinstall -y libpcre2-8-0 libgdk-pixbuf-2.0-0 libgtk-3-0 libpng16-16 libpng-tools libjpeg62-turbo libfreetype6 zlib1g libcairo2 libpango-1.0-0 libdrm2 shared-mime-info
                           read -p "Reinstall completed. Press Enter to continue..."
                           ;;
-                      9)
+                      8)
                           clear
                           echo "=== Reinstalling ALL Base System & Game Packages (Safe Reinstall) ==="
                           export DEBIAN_FRONTEND=noninteractive
@@ -792,13 +722,12 @@ jobs:
                               dialog git wget curl unzip xfce4-panel xfce4-terminal openbox xorg xserver-xorg \
                               console-setup pcmanfm chromium libpcre2-8-0 jstest-gtk joy2key xboxdrv \
                               bluetooth bluez bluez-tools network-manager wireless-tools wpasupplicant \
-                              desktop-file-utils plymouth plymouth-themes plymouth-label plymouth-x11 \
-                              libplymouth5 pix-plym-splash libgdk-pixbuf-2.0-0 libgtk-3-0 \
+                              desktop-file-utils libgdk-pixbuf-2.0-0 libgtk-3-0 \
                               libpng16-16 libpng-tools libjpeg62-turbo libfreetype6 zlib1g \
                               libcairo2 libpango-1.0-0 libdrm2 shared-mime-info libfuse2 grub-pc grub-efi-amd64 sudo
                           read -p "Reinstall completed. Press Enter to continue..."
                           ;;
-                      10|*)
+                      9|*)
                           break
                           ;;
                   esac
@@ -912,9 +841,9 @@ jobs:
           chroot mnt systemctl enable kgamer-setup.service
           chown -R kgamer:kgamer mnt/home/kgamer 2>/dev/null || true
 
-          # Kernel vmlinuz ve initrd kopyalama (ISO boot için)
-          cp mnt/boot/vmlinuz-* iso_root/live/vmlinuz || cp mnt/vmlinuz iso_root/live/vmlinuz || true
-          cp mnt/boot/initrd.img-* iso_root/live/initrd.img || cp mnt/initrd.img iso_root/live/initrd.img || true
+          # Kernel vmlinuz ve initrd kopyalama (ISO boot için esnek arama)
+          cp -f mnt/boot/vmlinuz-* iso_root/live/vmlinuz 2>/dev/null || cp -f mnt/vmlinuz iso_root/live/vmlinuz 2>/dev/null || true
+          cp -f mnt/boot/initrd.img-* iso_root/live/initrd.img 2>/dev/null || cp -f mnt/initrd.img iso_root/live/initrd.img 2>/dev/null || true
 
           # Sanal ve bağlanan dosya sistemlerini güvenli bir şekilde unmount etme
           umount mnt/dev/pts || true
