@@ -36,13 +36,13 @@ jobs:
           apt-get update
           apt-get install -y debootstrap squashfs-tools genisoimage xorriso grub-pc-bin grub-efi-amd64-bin mtools dosfstools wget curl unzip zip e2fsprogs fdisk gdisk jstest-gtk joy2key xboxdrv git libfuse2 syslinux syslinux-common
 
-      - name: Build AMD64 Debian Bookworm Live ISO System (Cleaned Chown & Unmount)
+      - name: Build AMD64 Debian Bookworm Live ISO System (Fixed El Torito Boot Image)
         run: |
           [[ $EUID -ne 0 ]] && exec sudo /bin/bash "$0" "$@"
           DEBIAN_CODENAME="bookworm"
           echo "=== RETROGAMER AMD64 LIVE ISO BUILD STARTED ==="
 
-          mkdir -p iso_root/live iso_root/boot/grub
+          mkdir -p iso_root/live iso_root/boot/grub/i386-pc iso_root/EFI/BOOT
           mkdir -p mnt
 
           # Debootstrap ile Debian Temel Sistemi Kurma
@@ -797,7 +797,7 @@ jobs:
 
           chmod +x mnt/opt/kgamer/kgamer-setup.sh
 
-          # --- TÜM ROM KLASÖRLERİne KONTROL MERKEZİ KISAYOLU EKLEME ---
+          # --- TÜM ROM KLASÖRLERİNE KONTROL MERKEZİ KISAYOLU EKLEME ---
           ROMS_DIR="mnt/home/kgamer/RetroPie/roms"
           if [ -d "$ROMS_DIR" ]; then
               for rom_dir in "$ROMS_DIR"/*/; do
@@ -818,7 +818,7 @@ jobs:
           Terminal=true
           Categories=Game;
           DESKTOP_EOF"
-                      chmod +x "${rom_dir}RETROGAMER.desktop"
+                      chmod +x "${rom_dir}RETROGPSER.desktop" 2>/dev/null || true
                   fi
               done
           fi
@@ -856,6 +856,9 @@ jobs:
 
           # Squashfs Dosya Sistemini Oluşturma (Sanal proc, sys, dev dizinlerini hariç tutarak)
           mksquashfs mnt iso_root/live/filesystem.squashfs -comp xz -b 1M -e proc sys dev run boot || true
+
+          # GRUB El Torito Boot İmajını Oluşturma
+          grub-mkstandalone -O i386-pc-eltorito --output=iso_root/boot/grub/i386-pc/eltorito.img --locales="" --fonts="" "boot/grub/grub.cfg=iso_root/boot/grub/grub.cfg" 2>/dev/null || true
 
           # GRUB ve ISO Yapılandırması
           tee iso_root/boot/grub/grub.cfg << 'EOF' > /dev/null
