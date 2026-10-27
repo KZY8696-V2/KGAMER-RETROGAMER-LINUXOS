@@ -36,11 +36,11 @@ jobs:
           apt-get update
           apt-get install -y debootstrap squashfs-tools genisoimage xorriso libisoburn1 grub-pc-bin grub-efi-amd64-bin mtools dosfstools wget curl unzip zip e2fsprogs fdisk gdisk jstest-gtk joy2key xboxdrv git libfuse2 syslinux syslinux-common
 
-      - name: Build AMD64 Debian Bookworm Live ISO System (Grub-MKRescue Hybrid Fix)
+      - name: Build AMD64 Debian Bookworm Live ISO System (Kernel Panic Fix)
         run: |
           [[ $EUID -ne 0 ]] && exec sudo /bin/bash "$0" "$@"
           DEBIAN_CODENAME="bookworm"
-          echo "=== RETROGAMER AMD64 LIVE ISO BUILD STARTED (GRUB-MKRESCUE) ==="
+          echo "=== RETROGAMER AMD64 LIVE ISO BUILD STARTED (KERNEL PANIC FIX) ==="
 
           mkdir -p iso_root/live iso_root/boot/grub
           mkdir -p mnt
@@ -716,19 +716,19 @@ jobs:
                           read -p "Reinstall completed. Press Enter to continue..."
                           ;;
                       8)
-                          clear
-                          echo "=== Reinstalling ALL Base System & Game Packages (Safe Reinstall) ==="
-                          export DEBIAN_FRONTEND=noninteractive
-                          sudo apt-get update
-                          sudo apt-get install --reinstall -y \
-                              dialog git wget curl unzip xfce4-panel xfce4-terminal openbox xorg xserver-xorg \
-                              console-setup pcmanfm chromium libpcre2-8-0 jstest-gtk joy2key xboxdrv \
-                              bluetooth bluez bluez-tools network-manager wireless-tools wpasupplicant \
-                              desktop-file-utils libgdk-pixbuf-2.0-0 libgtk-3-0 \
-                              libpng16-16 libpng-tools libjpeg62-turbo libfreetype6 zlib1g \
-                              libcairo2 libpango-1.0-0 libdrm2 shared-mime-info libfuse2 grub-pc grub-efi-amd64 sudo
-                          read -p "Reinstall completed. Press Enter to continue..."
-                          ;;
+                        clear
+                        echo "=== Reinstalling ALL Base System & Game Packages (Safe Reinstall) ==="
+                        export DEBIAN_FRONTEND=noninteractive
+                        sudo apt-get update
+                        sudo apt-get install --reinstall -y \
+                            dialog git wget curl unzip xfce4-panel xfce4-terminal openbox xorg xserver-xorg \
+                            console-setup pcmanfm chromium libpcre2-8-0 jstest-gtk joy2key xboxdrv \
+                            bluetooth bluez bluez-tools network-manager wireless-tools wpasupplicant \
+                            desktop-file-utils libgdk-pixbuf-2.0-0 libgtk-3-0 \
+                            libpng16-16 libpng-tools libjpeg62-turbo libfreetype6 zlib1g \
+                            libcairo2 libpango-1.0-0 libdrm2 shared-mime-info libfuse2 grub-pc grub-efi-amd64 sudo
+                        read -p "Reinstall completed. Press Enter to continue..."
+                        ;;
                       9|*)
                           break
                           ;;
@@ -857,12 +857,12 @@ jobs:
           # Squashfs Dosya Sistemini Oluşturma
           mksquashfs mnt iso_root/live/filesystem.squashfs -comp xz -b 1M -e proc sys dev run boot || true
 
-          # --- 3. GRUB YAPILANDIRMASI ---
+          # --- 3. GRUB YAPILANDIRMASI (UNION=OVERLAY İLE GÜNCELLENDİ) ---
           tee iso_root/boot/grub/grub.cfg << 'EOF' > /dev/null
           set timeout=5
           set default=0
           menuentry "RETROGAMER Live AMD64 (Debian Bookworm)" {
-              linux /live/vmlinuz boot=live components quiet splash
+              linux /live/vmlinuz boot=live components union=overlay quiet splash
               initrd /live/initrd.img
           }
           EOF
