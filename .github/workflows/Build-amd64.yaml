@@ -34,18 +34,18 @@ jobs:
           rm -f /etc/apt/trusted.gpg.d/microsoft*
 
           apt-get update
-          apt-get install -y debootstrap squashfs-tools genisoimage xorriso grub-pc-bin grub-efi-amd64-bin mtools dosfstools wget curl unzip zip e2fsprogs fdisk gdisk jstest-gtk joy2key xboxdrv git libfuse2 syslinux syslinux-common
+          apt-get install -y debootstrap squashfs-tools genisoimage xorriso libisoburn1 grub-pc-bin grub-efi-amd64-bin mtools dosfstools wget curl unzip zip e2fsprogs fdisk gdisk jstest-gtk joy2key xboxdrv git libfuse2 syslinux syslinux-common
 
-      - name: Build AMD64 Debian Bookworm Live ISO System (Fixed El Torito Boot Image)
+      - name: Build AMD64 Debian Bookworm Live ISO System (Grub-MKRescue Hybrid Fix)
         run: |
           [[ $EUID -ne 0 ]] && exec sudo /bin/bash "$0" "$@"
           DEBIAN_CODENAME="bookworm"
-          echo "=== RETROGAMER AMD64 LIVE ISO BUILD STARTED ==="
+          echo "=== RETROGAMER AMD64 LIVE ISO BUILD STARTED (GRUB-MKRESCUE) ==="
 
-          mkdir -p iso_root/live iso_root/boot/grub/i386-pc iso_root/EFI/BOOT
+          mkdir -p iso_root/live iso_root/boot/grub
           mkdir -p mnt
 
-          # Debootstrap ile Debian Temel Sistemi Kurma
+          # Debootstrap ile Debian 12 Bookworm Temel Sistemi Kurma
           echo "Bootstrapping Debian $DEBIAN_CODENAME AMD64 for ISO..."
           debootstrap --arch=amd64 "$DEBIAN_CODENAME" mnt http://deb.debian.org/debian/
 
@@ -71,7 +71,7 @@ jobs:
               desktop-file-utils libgdk-pixbuf-2.0-0 libgtk-3-0 \
               libpng16-16 libpng-tools libjpeg62-turbo libfreetype6 zlib1g \
               libcairo2 libpango-1.0-0 libdrm2 shared-mime-info libfuse2 \
-              grub-pc-bin grub-efi-amd64-bin linux-image-amd64 systemd-sysv sudo live-boot live-config ca-certificates
+              grub-pc-bin grub-efi-amd64-bin xorriso libisoburn1 linux-image-amd64 systemd-sysv sudo live-boot live-config ca-certificates
           "
 
           # --- 2. RETROPIE İLK KURULUMU ---
@@ -818,7 +818,7 @@ jobs:
           Terminal=true
           Categories=Game;
           DESKTOP_EOF"
-                      chmod +x "${rom_dir}RETROGPSER.desktop" 2>/dev/null || true
+                      chmod +x "${rom_dir}RETROGAMER.desktop" 2>/dev/null || true
                   fi
               done
           fi
@@ -854,29 +854,21 @@ jobs:
           umount -lf mnt/proc 2>/dev/null || true
           umount -lf mnt 2>/dev/null || true
 
-          # Squashfs Dosya Sistemini Oluşturma (Sanal proc, sys, dev dizinlerini hariç tutarak)
+          # Squashfs Dosya Sistemini Oluşturma
           mksquashfs mnt iso_root/live/filesystem.squashfs -comp xz -b 1M -e proc sys dev run boot || true
 
-          # GRUB El Torito Boot İmajını Oluşturma
-          grub-mkstandalone -O i386-pc-eltorito --output=iso_root/boot/grub/i386-pc/eltorito.img --locales="" --fonts="" "boot/grub/grub.cfg=iso_root/boot/grub/grub.cfg" 2>/dev/null || true
-
-          # GRUB ve ISO Yapılandırması
+          # --- 3. GRUB YAPILANDIRMASI ---
           tee iso_root/boot/grub/grub.cfg << 'EOF' > /dev/null
           set timeout=5
           set default=0
-          menuentry "RETROGAMER Live AMD64" {
-              linux /live/vmlinuz boot=live quiet
+          menuentry "RETROGAMER Live AMD64 (Debian Bookworm)" {
+              linux /live/vmlinuz boot=live components quiet splash
               initrd /live/initrd.img
           }
           EOF
 
-          # Genisoimage ile Boot Edilebilir ISO Oluşturma
-          genisoimage -o RETROGAMER-AMD64-LIVE.iso \
-              -b boot/grub/i386-pc/eltorito.img \
-              -no-emul-boot -boot-load-size 4 -boot-info-table \
-              -eltorito-alt-boot \
-              -e boot/grub/efi.img -no-emul-boot \
-              iso_root/ || genisoimage -o RETROGAMER-AMD64-LIVE.iso -R -J iso_root/
+          # --- 4. HİBRİT BOOT EDİLEBİLİR ISO OLUŞTURMA (GRUB-MKRESCUE) ---
+          grub-mkrescue -o RETROGAMER-AMD64-LIVE.iso iso_root/ -- -volid "RETROGAMER_LIVE"
 
           zip RETROGAMER-AMD64-LIVE.iso.zip RETROGAMER-AMD64-LIVE.iso
 
