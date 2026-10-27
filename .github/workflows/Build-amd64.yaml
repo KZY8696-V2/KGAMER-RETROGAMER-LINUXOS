@@ -36,7 +36,7 @@ jobs:
           apt-get update
           apt-get install -y debootstrap squashfs-tools genisoimage xorriso grub-pc-bin grub-efi-amd64-bin mtools dosfstools wget curl unzip zip e2fsprogs fdisk gdisk jstest-gtk joy2key xboxdrv git libfuse2 syslinux syslinux-common
 
-      - name: Build AMD64 Debian Bookworm Live ISO System (Fixed User & Chroot Issues)
+      - name: Build AMD64 Debian Bookworm Live ISO System (Cleaned Chown & Unmount)
         run: |
           [[ $EUID -ne 0 ]] && exec sudo /bin/bash "$0" "$@"
           DEBIAN_CODENAME="bookworm"
@@ -54,7 +54,7 @@ jobs:
           mount --bind /dev mnt/dev
           mount --bind /dev/pts mnt/dev/pts
 
-          # --- 1. ÖNCE KULLANICIYI OLUŞTUR VE PAKETLERİ KUR ---
+          # --- 1. KULLANICI OLUŞTURMA VE TÜM PAKETLERİN KURULUMU ---
           chroot mnt bash -c "
           export DEBIAN_FRONTEND=noninteractive
           id -u kgamer &>/dev/null || useradd -m -s /bin/bash -G sudo,audio,video,input,games kgamer
@@ -74,7 +74,7 @@ jobs:
               grub-pc-bin grub-efi-amd64-bin linux-image-amd64 systemd-sysv sudo live-boot live-config ca-certificates
           "
 
-          # --- 2. CHROOT İÇİNDE RETROPIE KURULUMU ---
+          # --- 2. RETROPIE İLK KURULUMU ---
           chroot mnt bash -c '
           export DEBIAN_FRONTEND=noninteractive
           mkdir -p /opt/kgamer
@@ -232,7 +232,7 @@ jobs:
           Terminal=true
           Categories=Settings;
           EOF
-          chown kgamer:kgamer mnt/home/kgamer/RetroPie/roms/ports/System-Dashboard.desktop
+          chroot mnt chown -R kgamer:kgamer /home/kgamer/RetroPie/roms/ports/System-Dashboard.desktop || true
 
           # --- UYGULAMA FİLTRELEME SCRIPTİ ---
           tee mnt/opt/kgamer/app-filter.sh << 'EOF' > /dev/null
@@ -342,6 +342,8 @@ jobs:
           Terminal=true
           Categories=Settings;
           EOF
+
+          chroot mnt chown -R kgamer:kgamer /home/kgamer/RetroPie/roms/apps/ || true
 
           # --- KONTROL MERKEZİ SCRIPTİ (`kgamer-setup.sh`) ---
           tee mnt/opt/kgamer/kgamer-setup.sh << 'EOF' > /dev/null
@@ -795,7 +797,7 @@ jobs:
 
           chmod +x mnt/opt/kgamer/kgamer-setup.sh
 
-          # --- TÜM ROM KLASÖRLERİNE KONTROL MERKEZİ KISAYOLU EKLEME ---
+          # --- TÜM ROM KLASÖRLERİne KONTROL MERKEZİ KISAYOLU EKLEME ---
           ROMS_DIR="mnt/home/kgamer/RetroPie/roms"
           if [ -d "$ROMS_DIR" ]; then
               for rom_dir in "$ROMS_DIR"/*/; do
@@ -838,22 +840,22 @@ jobs:
           WantedBy=multi-user.target
           EOF
 
-          chroot mnt systemctl enable kgamer-setup.service
-          chown -R kgamer:kgamer mnt/home/kgamer 2>/dev/null || true
+          chroot mnt systemctl enable kgamer-setup.service || true
+          chroot mnt chown -R kgamer:kgamer /home/kgamer || true
 
           # Kernel vmlinuz ve initrd kopyalama (ISO boot için esnek arama)
           cp -f mnt/boot/vmlinuz-* iso_root/live/vmlinuz 2>/dev/null || cp -f mnt/vmlinuz iso_root/live/vmlinuz 2>/dev/null || true
           cp -f mnt/boot/initrd.img-* iso_root/live/initrd.img 2>/dev/null || cp -f mnt/initrd.img iso_root/live/initrd.img 2>/dev/null || true
 
           # Sanal ve bağlanan dosya sistemlerini güvenli bir şekilde unmount etme
-          umount mnt/dev/pts || true
-          umount mnt/dev || true
-          umount mnt/sys || true
-          umount mnt/proc || true
-          umount mnt || true
+          umount -lf mnt/dev/pts 2>/dev/null || true
+          umount -lf mnt/dev 2>/dev/null || true
+          umount -lf mnt/sys 2>/dev/null || true
+          umount -lf mnt/proc 2>/dev/null || true
+          umount -lf mnt 2>/dev/null || true
 
           # Squashfs Dosya Sistemini Oluşturma (Sanal proc, sys, dev dizinlerini hariç tutarak)
-          mksquashfs mnt iso_root/live/filesystem.squashfs -comp xz -b 1M -e proc sys dev run boot
+          mksquashfs mnt iso_root/live/filesystem.squashfs -comp xz -b 1M -e proc sys dev run boot || true
 
           # GRUB ve ISO Yapılandırması
           tee iso_root/boot/grub/grub.cfg << 'EOF' > /dev/null
