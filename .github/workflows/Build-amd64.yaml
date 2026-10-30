@@ -34,7 +34,6 @@ jobs:
           rm -f /etc/apt/trusted.gpg.d/microsoft*
 
           apt-get update
-          # syslinux-utils ve ek paketler isolinux.bin hatasını önlemek için eklendi
           apt-get install -y debootstrap squashfs-tools genisoimage xorriso libisoburn1 mtools dosfstools wget curl unzip zip e2fsprogs fdisk gdisk jstest-gtk joy2key xboxdrv git libfuse2 syslinux syslinux-common syslinux-utils
 
       - name: Build AMD64 Debian Bookworm Live ISO System (System Monitor & Global Config)
@@ -747,14 +746,25 @@ jobs:
           # Squashfs Dosya Sistemini Oluşturma
           mksquashfs mnt iso_root/live/filesystem.squashfs -comp xz -b 1M -e proc sys dev run boot || true
 
-          # --- 3. SYSLINUX YAPILANDIRMASI (İsolinux Kopyalama ve Otomatik Yol Bulucu) ---
-          # isolinux.bin dosyasının sistemdeki olası tüm konumlarını tarayıp güvenle kopyalıyoruz
-          cp -f /usr/lib/ISOLINUX/isolinux.bin iso_root/isolinux/ 2>/dev/null || \
-          cp -f /usr/lib/syslinux/modules/bios/isolinux.bin iso_root/isolinux/ 2>/dev/null || \
-          cp -f /usr/share/syslinux/isolinux.bin iso_root/isolinux/ 2>/dev/null || true
+          # --- 3. SYSLINUX / ISOLINUX AKILLI DOSYA BULUCU VE KOPYALAYICI ---
+          echo "Finding and copying isolinux.bin automatically..."
+          find / -name "isolinux.bin" 2>/dev/null | while read -r found_bin; do
+              cp -f "$found_bin" iso_root/isolinux/ 2>/dev/null && echo "Copied from $found_bin"
+          done
 
-          cp -f /usr/lib/syslinux/modules/bios/* iso_root/isolinux/ 2>/dev/null || \
-          cp -f /usr/share/syslinux/* iso_root/isolinux/ 2>/dev/null || true
+          # Eğer bulunamazsa syslinux paketinden oluştur veya manuel kopyala
+          if [ ! -f iso_root/isolinux/isolinux.bin ]; then
+              if [ -f /usr/lib/SYSLINUX/isolinux.bin ]; then
+                  cp -f /usr/lib/SYSLINUX/isolinux.bin iso_root/isolinux/
+              elif [ -f /usr/share/syslinux/isolinux.bin ]; then
+                  cp -f /usr/share/syslinux/isolinux.bin iso_root/isolinux/
+              fi
+          fi
+
+          # Syslinux modüllerini ve COM32 dosyalarını kopyala
+          find / -name "vesamenu.c32" 2>/dev/null | while read -r found_mod; do
+              cp -f "$(dirname "$found_mod")"/* iso_root/isolinux/ 2>/dev/null || true
+          done
 
           tee iso_root/isolinux/isolinux.cfg << 'EOF' > /dev/null
           DEFAULT retrogamer
