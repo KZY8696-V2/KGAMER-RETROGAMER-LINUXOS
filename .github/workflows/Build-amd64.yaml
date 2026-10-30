@@ -1,4 +1,4 @@
-name: Build RETROGAMER AMD64 Bootable ISO Image (Direct Root Isolinux)
+name: Build RETROGAMER AMD64 Bootable ISO Image (Final Fix)
 
 on:
   push:
@@ -40,9 +40,8 @@ jobs:
         run: |
           [[ $EUID -ne 0 ]] && exec sudo /bin/bash "$0" "$@"
           DEBIAN_CODENAME="bookworm"
-          echo "=== RETROGAMER AMD64 LIVE ISO BUILD STARTED (DIRECT ROOT ISOLINUX) ==="
+          echo "=== RETROGAMER AMD64 LIVE ISO BUILD STARTED (FINAL FIX) ==="
 
-          # iso_root içine live ve standart isolinux dizinini kuruyoruz
           mkdir -p iso_root/live iso_root/isolinux
           mkdir -p mnt
 
@@ -65,7 +64,6 @@ jobs:
           chown -R kgamer:kgamer /home/kgamer
 
           apt-get update
-          # Dünyadaki TÜM dilleri (locales-all), TÜM klavyeleri ve Syslinux'u yüklüyoruz
           apt-get install -y --no-install-recommends \
               dialog locales locales-all console-setup keyboard-configuration xkb-data \
               git wget curl unzip xfce4-panel xfce4-terminal openbox xorg xserver-xorg \
@@ -160,7 +158,7 @@ jobs:
           chown -R kgamer:kgamer /home/kgamer/RetroPie 2>/dev/null || true
           '
 
-          # --- 3. SİSTEM MONİTÖRÜ SCRIPTİ (ÇİZGİSİZ, ANLIK DONANIM GÖRÜNTÜLEME) ---
+          # --- 3. SİSTEM MONİTÖRÜ SCRIPTİ ---
           tee mnt/opt/kgamer/system-dashboard.sh << 'EOF' > /dev/null
           #!/bin/bash
           export TERM=linux
@@ -737,15 +735,13 @@ jobs:
           cp -f mnt/boot/vmlinuz-* iso_root/live/vmlinuz 2>/dev/null || cp -f mnt/vmlinuz iso_root/live/vmlinuz 2>/dev/null || true
           cp -f mnt/boot/initrd.img-* iso_root/live/initrd.img 2>/dev/null || cp -f mnt/initrd.img iso_root/live/initrd.img 2>/dev/null || true
 
-          # --- ISOLINUX.BIN DOSYASINI DOĞRUDAN KÖK DİZİNE TAŞIMA ---
-          echo "Copying isolinux.bin directly to root iso_root/isolinux.bin..."
-          cp -f mnt/usr/lib/SYSLINUX/isolinux.bin iso_root/ 2>/dev/null || \
-          cp -f mnt/usr/share/syslinux/isolinux.bin iso_root/ 2>/dev/null || \
-          cp -f mnt/usr/lib/syslinux/modules/bios/isolinux.bin iso_root/ 2>/dev/null || \
-          cp -f /usr/lib/SYSLINUX/isolinux.bin iso_root/ 2>/dev/null || \
-          cp -f /usr/share/syslinux/isolinux.bin iso_root/ 2>/dev/null || true
+          # --- ISOLINUX DOSYALARINI DOĞRUDAN STANDARD KISMINA KURMA ---
+          cp -f mnt/usr/lib/SYSLINUX/isolinux.bin iso_root/isolinux/ 2>/dev/null || \
+          cp -f mnt/usr/share/syslinux/isolinux.bin iso_root/isolinux/ 2>/dev/null || \
+          cp -f mnt/usr/lib/syslinux/modules/bios/isolinux.bin iso_root/isolinux/ 2>/dev/null || \
+          cp -f /usr/lib/SYSLINUX/isolinux.bin iso_root/isolinux/ 2>/dev/null || \
+          cp -f /usr/share/syslinux/isolinux.bin iso_root/isolinux/ 2>/dev/null || true
 
-          # Gerekli syslinux modüllerini isolinux klasörüne kopyala
           cp -f mnt/usr/share/syslinux/* iso_root/isolinux/ 2>/dev/null || \
           cp -f mnt/usr/lib/syslinux/modules/bios/* iso_root/isolinux/ 2>/dev/null || \
           cp -f /usr/share/syslinux/* iso_root/isolinux/ 2>/dev/null || true
@@ -760,8 +756,7 @@ jobs:
           # Squashfs Dosya Sistemini Oluşturma
           mksquashfs mnt iso_root/live/filesystem.squashfs -comp xz -b 1M -e proc sys dev run boot || true
 
-          # Syslinux konfigürasyonunu doğrudan kök dizinde ayarlama
-          tee iso_root/isolinux.cfg << 'EOF' > /dev/null
+          tee iso_root/isolinux/isolinux.cfg << 'EOF' > /dev/null
           DEFAULT retrogamer
           TIMEOUT 50
           PROMPT 1
@@ -771,9 +766,9 @@ jobs:
               APPEND initrd=/live/initrd.img boot=live components union=overlay quiet splash
           EOF
 
-          # --- 4. GENISOIMAGE İLE DOĞRUDAN KÖK YOLDA ISO OLUŞTURMA ---
+          # --- 4. GENISOIMAGE İLE DOĞRUDAN ISOLINUX/ISOLINUX.BIN YOLU İLE ISO OLUŞTURMA ---
           genisoimage -o RETROGAMER-AMD64-LIVE.iso \
-              -b isolinux.bin \
+              -b isolinux/isolinux.bin \
               -c isolinux/boot.cat \
               -no-emul-boot -boot-load-size 4 -boot-info-table \
               -J -R -V "RETROGAMER_LIVE" iso_root/
