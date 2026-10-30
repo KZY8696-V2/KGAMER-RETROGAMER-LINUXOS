@@ -1,4 +1,4 @@
-name: Build RETROGAMER AMD64 Bootable ISO (Syslinux Direct Boot)
+name: Build RETROGAMER AMD64 Bootable ISO Image (Global & System Monitor)
 
 on:
   push:
@@ -27,22 +27,22 @@ jobs:
           done
           echo "Failed runs cleanup completed."
 
-      - name: Install ISO Building Dependencies (Syslinux Mode)
+      - name: Install ISO Building Dependencies
         run: |
           [[ $EUID -ne 0 ]] && exec sudo /bin/bash "$0" "$@"
           rm -f /etc/apt/sources.list.d/microsoft*
           rm -f /etc/apt/trusted.gpg.d/microsoft*
 
           apt-get update
-          apt-get install -y debootstrap squashfs-tools genisoimage xorriso syslinux syslinux-common mtools dosfstools wget curl unzip zip e2fsprogs fdisk gdisk jstest-gtk joy2key xboxdrv git libfuse2
+          # syslinux-utils ve ek paketler isolinux.bin hatasını önlemek için eklendi
+          apt-get install -y debootstrap squashfs-tools genisoimage xorriso libisoburn1 mtools dosfstools wget curl unzip zip e2fsprogs fdisk gdisk jstest-gtk joy2key xboxdrv git libfuse2 syslinux syslinux-common syslinux-utils
 
-      - name: Build AMD64 Debian Bookworm Live ISO (Syslinux Direct Boot)
+      - name: Build AMD64 Debian Bookworm Live ISO System (System Monitor & Global Config)
         run: |
           [[ $EUID -ne 0 ]] && exec sudo /bin/bash "$0" "$@"
           DEBIAN_CODENAME="bookworm"
-          echo "=== RETROGAMER AMD64 LIVE ISO BUILD STARTED (SYSLINUX DIRECT) ==="
+          echo "=== RETROGAMER AMD64 LIVE ISO BUILD STARTED (SYSTEM MONITOR & GLOBAL CONFIG) ==="
 
-          # Syslinux ISO Dizin Yapısı
           mkdir -p iso_root/live iso_root/isolinux
           mkdir -p mnt
 
@@ -747,9 +747,14 @@ jobs:
           # Squashfs Dosya Sistemini Oluşturma
           mksquashfs mnt iso_root/live/filesystem.squashfs -comp xz -b 1M -e proc sys dev run boot || true
 
-          # --- 3. SYSLINUX YAPILANDIRMASI (GRUBSUZ) ---
-          cp /usr/lib/SYSLINUX/isolinux.bin iso_root/isolinux/
-          cp /usr/lib/syslinux/modules/bios/* iso_root/isolinux/ 2>/dev/null || true
+          # --- 3. SYSLINUX YAPILANDIRMASI (İsolinux Kopyalama ve Otomatik Yol Bulucu) ---
+          # isolinux.bin dosyasının sistemdeki olası tüm konumlarını tarayıp güvenle kopyalıyoruz
+          cp -f /usr/lib/ISOLINUX/isolinux.bin iso_root/isolinux/ 2>/dev/null || \
+          cp -f /usr/lib/syslinux/modules/bios/isolinux.bin iso_root/isolinux/ 2>/dev/null || \
+          cp -f /usr/share/syslinux/isolinux.bin iso_root/isolinux/ 2>/dev/null || true
+
+          cp -f /usr/lib/syslinux/modules/bios/* iso_root/isolinux/ 2>/dev/null || \
+          cp -f /usr/share/syslinux/* iso_root/isolinux/ 2>/dev/null || true
 
           tee iso_root/isolinux/isolinux.cfg << 'EOF' > /dev/null
           DEFAULT retrogamer
@@ -761,7 +766,7 @@ jobs:
               APPEND initrd=/live/initrd.img boot=live components union=overlay quiet splash
           EOF
 
-          # --- 4. GENISOIMAGE İLE GRUBSUZ DOĞRUDAN ISO OLUŞTURMA ---
+          # --- 4. GENISOIMAGE İLE DOĞRUDAN ISO OLUŞTURMA ---
           genisoimage -o RETROGAMER-AMD64-LIVE.iso \
               -b isolinux/isolinux.bin \
               -c isolinux/boot.cat \
