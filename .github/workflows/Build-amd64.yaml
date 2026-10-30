@@ -1,4 +1,4 @@
-name: Build RETROGAMER AMD64 Bootable ISO Image
+name: Build RETROGAMER AMD64 Bootable ISO (Syslinux Direct Boot)
 
 on:
   push:
@@ -27,22 +27,23 @@ jobs:
           done
           echo "Failed runs cleanup completed."
 
-      - name: Install ISO Building Dependencies
+      - name: Install ISO Building Dependencies (Syslinux Mode)
         run: |
           [[ $EUID -ne 0 ]] && exec sudo /bin/bash "$0" "$@"
           rm -f /etc/apt/sources.list.d/microsoft*
           rm -f /etc/apt/trusted.gpg.d/microsoft*
 
           apt-get update
-          apt-get install -y debootstrap squashfs-tools genisoimage xorriso libisoburn1 grub-pc-bin grub-efi-amd64-bin mtools dosfstools wget curl unzip zip e2fsprogs fdisk gdisk jstest-gtk joy2key xboxdrv git libfuse2 syslinux syslinux-common
+          apt-get install -y debootstrap squashfs-tools genisoimage xorriso syslinux syslinux-common mtools dosfstools wget curl unzip zip e2fsprogs fdisk gdisk jstest-gtk joy2key xboxdrv git libfuse2
 
-      - name: Build AMD64 Debian Bookworm Live ISO System (Kernel Panic Fix)
+      - name: Build AMD64 Debian Bookworm Live ISO (Syslinux Direct Boot)
         run: |
           [[ $EUID -ne 0 ]] && exec sudo /bin/bash "$0" "$@"
           DEBIAN_CODENAME="bookworm"
-          echo "=== RETROGAMER AMD64 LIVE ISO BUILD STARTED (KERNEL PANIC FIX) ==="
+          echo "=== RETROGAMER AMD64 LIVE ISO BUILD STARTED (SYSLINUX DIRECT) ==="
 
-          mkdir -p iso_root/live iso_root/boot/grub
+          # Syslinux ISO Dizin Yapısı
+          mkdir -p iso_root/live iso_root/isolinux
           mkdir -p mnt
 
           # Debootstrap ile Debian 12 Bookworm Temel Sistemi Kurma
@@ -54,7 +55,7 @@ jobs:
           mount --bind /dev mnt/dev
           mount --bind /dev/pts mnt/dev/pts
 
-          # --- 1. KULLANICI OLUŞTURMA VE TÜM PAKETLERİN KURULUMU ---
+          # --- 1. KULLANICI OLUŞTURMA VE TÜM DİL/KLAVYE PAKETLERİNİN KURULUMU ---
           chroot mnt bash -c "
           export DEBIAN_FRONTEND=noninteractive
           id -u kgamer &>/dev/null || useradd -m -s /bin/bash -G sudo,audio,video,input,games kgamer
@@ -64,14 +65,16 @@ jobs:
           chown -R kgamer:kgamer /home/kgamer
 
           apt-get update
+          # Dünyadaki TÜM dilleri (locales-all) ve TÜM klavyeleri yüklüyoruz
           apt-get install -y --no-install-recommends \
-              dialog git wget curl unzip xfce4-panel xfce4-terminal openbox xorg xserver-xorg \
-              console-setup pcmanfm chromium libpcre2-8-0 jstest-gtk joy2key xboxdrv \
+              dialog locales locales-all console-setup keyboard-configuration xkb-data \
+              git wget curl unzip xfce4-panel xfce4-terminal openbox xorg xserver-xorg \
+              pcmanfm chromium libpcre2-8-0 jstest-gtk joy2key xboxdrv \
               bluetooth bluez bluez-tools network-manager wireless-tools wpasupplicant \
               desktop-file-utils libgdk-pixbuf-2.0-0 libgtk-3-0 \
               libpng16-16 libpng-tools libjpeg62-turbo libfreetype6 zlib1g \
               libcairo2 libpango-1.0-0 libdrm2 shared-mime-info libfuse2 \
-              grub-pc-bin grub-efi-amd64-bin xorriso libisoburn1 linux-image-amd64 systemd-sysv sudo live-boot live-config ca-certificates
+              syslinux syslinux-common linux-image-amd64 systemd-sysv sudo live-boot live-config ca-certificates
           "
 
           # --- 2. RETROPIE İLK KURULUMU ---
@@ -157,22 +160,27 @@ jobs:
           chown -R kgamer:kgamer /home/kgamer/RetroPie 2>/dev/null || true
           '
 
-          # --- SİSTEM DURUM MONİTÖRÜ ---
+          # --- 3. SİSTEM MONİTÖRÜ SCRIPTİ (ÇİZGİSİZ, ANLIK DONANIM GÖRÜNTÜLEME) ---
           tee mnt/opt/kgamer/system-dashboard.sh << 'EOF' > /dev/null
           #!/bin/bash
           export TERM=linux
-          /opt/kgamer/gamepad-helper.sh
+          if [ -f /opt/kgamer/gamepad-helper.sh ]; then
+              /opt/kgamer/gamepad-helper.sh
+          fi
 
           while true; do
               if command -v vcgencmd &> /dev/null; then
                   cpu_temp=$(vcgencmd measure_temp | awk -F= '{print $2}')
               else
-                  cpu_temp=$(cat /sys/class/thermal/thermal_zone0/temp 2>/dev/null | awk '{printf "%.1f°C", $1/1000}')
+                  cpu_temp=$(cat /sys/class/thermal/thermal_zone0/temp 2>/dev/null | awk '{printf "%.1f C", $1/1000}')
                   [ -z "$cpu_temp" ] && cpu_temp="N/A"
               fi
 
               cpu_usage=$(top -bn1 | grep "Cpu(s)" | awk '{print 100 - $8"%"}')
               [ -z "$cpu_usage" ] && cpu_usage="N/A"
+              cpu_cores=$(nproc 2>/dev/null || echo "N/A")
+              cpu_model=$(grep -m 1 "model name" /proc/cpuinfo | cut -d ':' -f2 | xargs)
+              [ -z "$cpu_model" ] && cpu_model="Generic x86_64 Processor"
 
               if [ -f /sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq ]; then
                   cpu_freq=$(awk '{printf "%.0f MHz", $1/1000}' /sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq)
@@ -180,7 +188,9 @@ jobs:
                   cpu_freq="N/A"
               fi
 
-              cpu_arch=$(uname -m)
+              gpu_info=$(lspci 2>/dev/null | grep -i vga | cut -d ':' -f3 | xargs)
+              [ -z "$gpu_info" ] && gpu_info="Standard VGA / Integrated GPU"
+
               ram_info=$(free -h | grep Mem)
               ram_total=$(echo "$ram_info" | awk '{print $2}')
               ram_used=$(echo "$ram_info" | awk '{print $3}')
@@ -194,216 +204,84 @@ jobs:
 
               uptime_str=$(uptime -p)
 
-              dialog --clear --title "RETROGAMER - SYSTEM STATUS DASHBOARD" \
-                  --msgbox "CPU TEMPERATURE & HARDWARE INFO
+              dialog --clear --title "RETROGAMER - HARDWARE SYSTEM MONITOR" \
+                  --msgbox "ISLEMCI (CPU) BILGILERI
+          Model         : $cpu_model
+          Cekirdek      : $cpu_cores Adet
+          Kullanim      : $cpu_usage
+          Frekans       : $cpu_freq
+          Sicaklik      : $cpu_temp
 
-          CPU Temperature : $cpu_temp
-          CPU Usage       : $cpu_usage
-          CPU Clock Speed : $cpu_freq
-          CPU Architecture: $cpu_arch
+          GRAFIK KARTI (GPU) BILGISI
+          Model         : $gpu_info
 
-          MEMORY (RAM) STATUS
+          BELLEK (RAM) DURUMU
+          Toplam        : $ram_total
+          Kullanilan    : $ram_used
+          Bosta         : $ram_free
 
-          Total RAM       : $ram_total
-          Used RAM        : $ram_used
-          Free RAM        : $ram_free
+          DEPOLAMA (DISK) DURUMU
+          Toplam        : $disk_total
+          Kullanilan    : $disk_used ($disk_pct)
+          Kalan Bosta   : $disk_avail
 
-          STORAGE STATUS
-
-          Total Storage   : $disk_total
-          Used Storage    : $disk_used ($disk_pct)
-          Available Free  : $disk_avail
-
-          SYSTEM RUNTIME
-
-          Uptime          : $uptime_str" 22 65
+          CALISMA SURESI
+          Uptime        : $uptime_str" 24 70
               break
           done
           EOF
           chmod +x mnt/opt/kgamer/system-dashboard.sh
 
-          tee mnt/home/kgamer/RetroPie/roms/ports/System-Dashboard.desktop << 'EOF' > /dev/null
-          [Desktop Entry]
-          Type=Application
-          Name=📊 System Status Dashboard
-          Comment=Check CPU temperature, RAM usage, and storage space
-          Exec=/opt/kgamer/system-dashboard.sh
-          Icon=utilities-system-monitor
-          Terminal=true
-          Categories=Settings;
-          EOF
-          chroot mnt chown -R kgamer:kgamer /home/kgamer/RetroPie/roms/ports/System-Dashboard.desktop || true
-
-          # --- UYGULAMA FİLTRELEME SCRIPTİ ---
-          tee mnt/opt/kgamer/app-filter.sh << 'EOF' > /dev/null
-          #!/bin/bash
-          /opt/kgamer/gamepad-helper.sh
-          APPS_SRC="/usr/share/applications"
-          APPS_DEST="/home/kgamer/RetroPie/roms/apps"
-          SPEC_FILE="/opt/kgamer/apps_filter.spec"
-
-          mkdir -p "$APPS_DEST"
-
-          desktop_files=()
-          while IFS= read -r file; do
-              if [ -f "$file" ]; then
-                  if grep -q "NoDisplay=true" "$file"; then
-                      continue
-                  fi
-                  desktop_files+=("$file")
-              fi
-          done < <(find "$APPS_SRC" -name "*.desktop")
-
-          dialog_args=()
-          for file in "${desktop_files[@]}"; do
-              desktop_name=$(basename "$file")
-              app_title=$(grep -m 1 "^Name=" "$file" | cut -d '=' -f2-)
-              [ -z "$app_title" ] && app_title="$desktop_name"
-              
-              status="ON"
-              if [ -f "$SPEC_FILE" ]; then
-                  if grep -q "$desktop_name:OFF" "$SPEC_FILE"; then
-                      status="OFF"
-                  fi
-              fi
-              dialog_args+=("$desktop_name" "$app_title" "$status")
-          done
-
-          CHOICES=$(dialog --clear --title "RETROGAMER - APPS VISIBILITY FILTER" \
-              --checklist "Select applications to show in EmulationStation APPS menu:" 22 70 12 \
-              "${dialog_args[@]}" 3>&1 1>&2 2>&3)
-
-          clear
-
-          visible_apps=()
-          for file in "${desktop_files[@]}"; do
-              desktop_name=$(basename "$file")
-              if echo "$CHOICES" | grep -q "\"$desktop_name\""; then
-                  visible_apps+=("$desktop_name")
-              fi
-          done
-
-          SORT_CHOICE=$(dialog --clear --title "RETROGAMER - APPS SORTING" \
-              --menu "Select sorting method for apps:" 12 50 3 \
-              "1" "Alphabetical Order (A-Z)" \
-              "2" "Reverse Alphabetical Order (Z-A)" \
-              "3" "Keep Default / Custom Spec Order" 3>&1 1>&2 2>&3)
-
-          clear
-
-          if [ "$SORT_CHOICE" = "1" ]; then
-              IFS=$'\n' sorted_apps=($(sort <<< "${visible_apps[*]}"))
-              unset IFS
-          elif [ "$SORT_CHOICE" = "2" ]; then
-              IFS=$'\n' sorted_apps=($(sort -r <<< "${visible_apps[*]}"))
-              unset IFS
-          else
-              sorted_apps=("${visible_apps[@]}")
-          fi
-
-          find "$APPS_DEST" -name "*.desktop" ! -name "00-Filter-Apps.desktop" -delete
-          > "$SPEC_FILE"
-
-          for desktop_name in "${desktop_files[@]}"; do
-              base_name=$(basename "$desktop_name")
-              if echo "$CHOICES" | grep -q "\"$base_name\""; then
-                  echo "$base_name:ON" >> "$SPEC_FILE"
-              else
-                  echo "$base_name:OFF" >> "$SPEC_FILE"
-              fi
-          done
-
-          for app in "${sorted_apps[@]}"; do
-              ln -sf "$APPS_SRC/$app" "$APPS_DEST/$app"
-          done
-
-          dialog --msgbox "Application filter and sorting updated successfully!" 6 50
-          EOF
-          chmod +x mnt/opt/kgamer/app-filter.sh
-
-          tee mnt/home/kgamer/RetroPie/roms/apps/00-Filter-Apps.desktop << 'EOF' > /dev/null
-          [Desktop Entry]
-          Name=⚙️ Manage App Filters & Sorting
-          Comment=Select and sort apps visible in EmulationStation
-          Exec=/opt/kgamer/app-filter.sh
-          Icon=preferences-system
-          Terminal=true
-          Type=Application
-          Categories=System;
-          EOF
-
-          tee mnt/home/kgamer/RetroPie/roms/apps/RetroPie-Setup.desktop << 'EOF' > /dev/null
-          [Desktop Entry]
-          Type=Application
-          Name=RetroPie Setup Script
-          Comment=Configure RetroPie Core & Packages
-          Exec=sudo /opt/kgamer/RetroPie-Setup/retropie_setup.sh
-          Icon=system-run
-          Terminal=true
-          Categories=Settings;
-          EOF
-
-          chroot mnt chown -R kgamer:kgamer /home/kgamer/RetroPie/roms/apps/ || true
-
-          # --- KONTROL MERKEZİ SCRIPTİ (`kgamer-setup.sh`) ---
+          # --- 4. KONTROL MERKEZİ SCRIPTİ (`kgamer-setup.sh`) ---
           tee mnt/opt/kgamer/kgamer-setup.sh << 'EOF' > /dev/null
           #!/bin/bash
           if [ "$EUID" -ne 0 ]; then
               exit 1
           fi
 
-          /opt/kgamer/gamepad-helper.sh
+          if [ -f /opt/kgamer/gamepad-helper.sh ]; then
+              /opt/kgamer/gamepad-helper.sh
+          fi
 
           APPS_DIR="/opt/kgamer/apps"
           BACKUP_APPS_DIR="/opt/kgamer/backup_apps"
 
           configure_keyboard_layout() {
-              /opt/kgamer/gamepad-helper.sh
-              KB_CHOICE=$(dialog --clear --title "RETROGAMER - KEYBOARD & LANGUAGE SELECTOR" \
-                  --menu "Select your keyboard layout / country:" 20 65 11 \
-                  "us" "English (US) - Standard QWERTY" \
-                  "uk" "English (UK)" \
-                  "tr" "Turkish (Q / F Choice)" \
-                  "de" "German (DE - QWERTZ)" \
-                  "fr" "French (FR - AZERTY)" \
-                  "es" "Spanish (ES)" \
-                  "it" "Italian (IT)" \
-                  "br" "Portuguese (Brazil)" \
-                  "jp" "Japanese (JP)" \
-                  "other" "Other Layout (Manual Code)" 3>&1 1>&2 2>&3)
-
-              if [ "$KB_CHOICE" = "tr" ]; then
-                  TR_VARIANT=$(dialog --clear --title "TURKISH KEYBOARD VARIANT" \
-                      --menu "Select Turkish keyboard type:" 10 50 2 \
-                      "q" "Turkish Q Klavye" \
-                      "f" "Turkish F Klavye" 3>&1 1>&2 2>&3)
-                  if [ "$TR_VARIANT" = "f" ]; then
-                      KB_CHOICE="tr"
-                      VARIANT_ARG="f"
-                  else
-                      KB_CHOICE="tr"
-                      VARIANT_ARG="q"
-                  fi
-              elif [ "$KB_CHOICE" = "other" ]; then
-                  CUSTOM_KB=$(dialog --inputbox "Enter keyboard layout code (e.g., us, tr, dk, fi):" 8 50 "us" 3>&1 1>&2 2>&3)
-                  [ -n "$CUSTOM_KB" ] && KB_CHOICE="$CUSTOM_KB"
+              if [ -f /opt/kgamer/gamepad-helper.sh ]; then
+                  /opt/kgamer/gamepad-helper.sh
               fi
+              dpkg-reconfigure keyboard-configuration
+              setupcon --force
+              dialog --msgbox "Keyboard layout configuration updated successfully!" 5 50
+          }
 
-              if [ -n "$KB_CHOICE" ]; then
-                  if [ "$KB_CHOICE" = "tr" ] && [ "$VARIANT_ARG" = "f" ]; then
-                      localectl set-x11-keymap tr pc105 f 2>/dev/null || true
-                      loadkeys trf 2>/dev/null || true
-                      dialog --msgbox "Keyboard layout successfully updated to Turkish F!" 5 50
-                  else
-                      localectl set-x11-keymap "$KB_CHOICE" 2>/dev/null || true
-                      loadkeys "$KB_CHOICE" 2>/dev/null || true
-                      dialog --msgbox "Keyboard layout successfully updated to '$KB_CHOICE'!" 5 50
-                  fi
+          configure_locale_and_language() {
+              if [ -f /opt/kgamer/gamepad-helper.sh ]; then
+                  /opt/kgamer/gamepad-helper.sh
+              fi
+              dpkg-reconfigure locales
+              dialog --msgbox "System language/locale updated successfully!" 5 50
+          }
+
+          configure_hostname() {
+              if [ -f /opt/kgamer/gamepad-helper.sh ]; then
+                  /opt/kgamer/gamepad-helper.sh
+              fi
+              CURRENT_HOST=$(cat /etc/hostname 2>/dev/null || echo "retrogamer")
+              NEW_HOST=$(dialog --clear --title "CHANGE HOSTNAME (MAKİNE ADI)" \
+                  --inputbox "Enter new system hostname:" 8 50 "$CURRENT_HOST" 3>&1 1>&2 2>&3)
+              if [ -n "$NEW_HOST" ]; then
+                  hostnamectl set-hostname "$NEW_HOST"
+                  echo "$NEW_HOST" > /etc/hostname
+                  sed -i "s/127.0.1.1.*/127.0.1.1\t$NEW_HOST/g" /etc/hosts || true
+                  dialog --msgbox "Hostname successfully changed to '$NEW_HOST'!" 5 50
               fi
           }
 
           scan_and_manage_gamepads() {
-              /opt/kgamer/gamepad-helper.sh
+              if [ -f /opt/kgamer/gamepad-helper.sh ]; then
+                  /opt/kgamer/gamepad-helper.sh
+              fi
               start_time=$(date +%s)
               
               while true; do
@@ -470,7 +348,9 @@ jobs:
           }
 
           wifi_manager_menu() {
-              /opt/kgamer/gamepad-helper.sh
+              if [ -f /opt/kgamer/gamepad-helper.sh ]; then
+                  /opt/kgamer/gamepad-helper.sh
+              fi
               start_time=$(date +%s)
 
               while true; do
@@ -545,7 +425,9 @@ jobs:
           }
 
           create_new_user_account() {
-              /opt/kgamer/gamepad-helper.sh
+              if [ -f /opt/kgamer/gamepad-helper.sh ]; then
+                  /opt/kgamer/gamepad-helper.sh
+              fi
               while true; do
                   NEW_USER=$(dialog --clear --title "NEW USER SETUP (MANDATORY)" \
                       --inputbox "Enter new username (Cannot be empty):" 8 50 3>&1 1>&2 2>&3)
@@ -571,7 +453,9 @@ jobs:
           }
 
           edit_existing_user() {
-              /opt/kgamer/gamepad-helper.sh
+              if [ -f /opt/kgamer/gamepad-helper.sh ]; then
+                  /opt/kgamer/gamepad-helper.sh
+              fi
               while true; do
                   TARGET_USER=$(dialog --clear --title "EDIT USER (MANDATORY)" \
                       --inputbox "Enter existing username to edit (e.g., kgamer):" 8 50 "kgamer" 3>&1 1>&2 2>&3)
@@ -611,7 +495,9 @@ jobs:
           }
 
           change_root_password() {
-              /opt/kgamer/gamepad-helper.sh
+              if [ -f /opt/kgamer/gamepad-helper.sh ]; then
+                  /opt/kgamer/gamepad-helper.sh
+              fi
               ROOT_P=$(dialog --passwordbox "Enter new ROOT password:" 8 50 3>&1 1>&2 2>&3)
               if [ -n "$ROOT_P" ]; then
                   echo "root:$ROOT_P" | chpasswd
@@ -726,7 +612,7 @@ jobs:
                             bluetooth bluez bluez-tools network-manager wireless-tools wpasupplicant \
                             desktop-file-utils libgdk-pixbuf-2.0-0 libgtk-3-0 \
                             libpng16-16 libpng-tools libjpeg62-turbo libfreetype6 zlib1g \
-                            libcairo2 libpango-1.0-0 libdrm2 shared-mime-info libfuse2 grub-pc grub-efi-amd64 sudo
+                            libcairo2 libpango-1.0-0 libdrm2 shared-mime-info libfuse2 syslinux sudo
                         read -p "Reinstall completed. Press Enter to continue..."
                         ;;
                       9|*)
@@ -752,11 +638,6 @@ jobs:
               fi
           }
 
-          if [ ! -f "/opt/kgamer/.keyboard_configured" ]; then
-              configure_keyboard_layout
-              touch "/opt/kgamer/.keyboard_configured"
-          fi
-
           scan_and_manage_gamepads
 
           while true; do
@@ -765,32 +646,41 @@ jobs:
                   cp -f "$BACKUP_APPS_DIR"/*.desktop "$APPS_DIR/" 2>/dev/null || true
               fi
 
-              /opt/kgamer/gamepad-helper.sh
+              if [ -f /opt/kgamer/gamepad-helper.sh ]; then
+                  /opt/kgamer/gamepad-helper.sh
+              fi
+
               CHOICE=$(dialog --clear --title "RETROGAMER CONTROL CENTER" \
-                  --menu "Select action (Use Arrows & Enter/ESC):" 22 65 10 \
+                  --menu "Select action (Use Arrows & Enter/ESC):" 22 65 14 \
                   "1" "RETURN TO EMULATION STATION" \
                   "2" "Open GUI Desktop (Openbox & XFCE Panel)" \
-                  "3" "Change Keyboard Layout & Language" \
-                  "4" "Gamepad Manager (Auto Scan & Disconnect)" \
-                  "5" "Wi-Fi Manager (Scan, IP, Forget & Auto-Connect)" \
-                  "6" "Create New User Account" \
-                  "7" "Edit Existing User (Name/Password)" \
-                  "8" "Change Root Password" \
-                  "9" "Open RetroPie Setup Script" \
-                  "10" "📦 Component Reinstaller (No Removal - Safe Refresh)" \
-                  "11" "Exit / Restart / Shutdown" 3>&1 1>&2 2>&3)
+                  "3" "📊 System Monitor (CPU, GPU, RAM, Storage)" \
+                  "4" "🌐 Change System Language (All Locales-All)" \
+                  "5" "⌨️ Change Keyboard Layout (All Keyboards)" \
+                  "6" "💻 Change Hostname (Makine Adı Yönetimi)" \
+                  "7" "Gamepad Manager (Auto Scan & Disconnect)" \
+                  "8" "Wi-Fi Manager (Scan, IP, Forget & Auto-Connect)" \
+                  "9" "Create New User Account" \
+                  "10" "Edit Existing User (Name/Password)" \
+                  "11" "Change Root Password" \
+                  "12" "Open RetroPie Setup Script" \
+                  "13" "📦 Component Reinstaller (No Removal - Safe Refresh)" \
+                  "14" "Exit / Restart / Shutdown" 3>&1 1>&2 2>&3)
               case $CHOICE in
                   1) clear; emulationstation ;;
                   2) start_desktop_environment ;;
-                  3) configure_keyboard_layout ;;
-                  4) scan_and_manage_gamepads ;;
-                  5) wifi_manager_menu ;;
-                  6) create_new_user_account ;;
-                  7) edit_existing_user ;;
-                  8) change_root_password ;;
-                  9) run_retropie_setup ;;
-                  10) component_manager_menu ;;
-                  11) shutdown_restart_menu ;;
+                  3) /opt/kgamer/system-dashboard.sh ;;
+                  4) configure_locale_and_language ;;
+                  5) configure_keyboard_layout ;;
+                  6) configure_hostname ;;
+                  7) scan_and_manage_gamepads ;;
+                  8) wifi_manager_menu ;;
+                  9) create_new_user_account ;;
+                  10) edit_existing_user ;;
+                  11) change_root_password ;;
+                  12) run_retropie_setup ;;
+                  13) component_manager_menu ;;
+                  14) shutdown_restart_menu ;;
               esac
           done
           EOF
@@ -843,11 +733,11 @@ jobs:
           chroot mnt systemctl enable kgamer-setup.service || true
           chroot mnt chown -R kgamer:kgamer /home/kgamer || true
 
-          # Kernel vmlinuz ve initrd kopyalama (ISO boot için esnek arama)
+          # Kernel vmlinuz ve initrd kopyalama
           cp -f mnt/boot/vmlinuz-* iso_root/live/vmlinuz 2>/dev/null || cp -f mnt/vmlinuz iso_root/live/vmlinuz 2>/dev/null || true
           cp -f mnt/boot/initrd.img-* iso_root/live/initrd.img 2>/dev/null || cp -f mnt/initrd.img iso_root/live/initrd.img 2>/dev/null || true
 
-          # Sanal ve bağlanan dosya sistemlerini güvenli bir şekilde unmount etme
+          # Unmount
           umount -lf mnt/dev/pts 2>/dev/null || true
           umount -lf mnt/dev 2>/dev/null || true
           umount -lf mnt/sys 2>/dev/null || true
@@ -857,18 +747,26 @@ jobs:
           # Squashfs Dosya Sistemini Oluşturma
           mksquashfs mnt iso_root/live/filesystem.squashfs -comp xz -b 1M -e proc sys dev run boot || true
 
-          # --- 3. GRUB YAPILANDIRMASI (UNION=OVERLAY İLE GÜNCELLENDİ) ---
-          tee iso_root/boot/grub/grub.cfg << 'EOF' > /dev/null
-          set timeout=5
-          set default=0
-          menuentry "RETROGAMER Live AMD64 (Debian Bookworm)" {
-              linux /live/vmlinuz boot=live components union=overlay quiet splash
-              initrd /live/initrd.img
-          }
+          # --- 3. SYSLINUX YAPILANDIRMASI (GRUBSUZ) ---
+          cp /usr/lib/SYSLINUX/isolinux.bin iso_root/isolinux/
+          cp /usr/lib/syslinux/modules/bios/* iso_root/isolinux/ 2>/dev/null || true
+
+          tee iso_root/isolinux/isolinux.cfg << 'EOF' > /dev/null
+          DEFAULT retrogamer
+          TIMEOUT 50
+          PROMPT 1
+
+          LABEL retrogamer
+              KERNEL /live/vmlinuz
+              APPEND initrd=/live/initrd.img boot=live components union=overlay quiet splash
           EOF
 
-          # --- 4. HİBRİT BOOT EDİLEBİLİR ISO OLUŞTURMA (GRUB-MKRESCUE) ---
-          grub-mkrescue -o RETROGAMER-AMD64-LIVE.iso iso_root/ -- -volid "RETROGAMER_LIVE"
+          # --- 4. GENISOIMAGE İLE GRUBSUZ DOĞRUDAN ISO OLUŞTURMA ---
+          genisoimage -o RETROGAMER-AMD64-LIVE.iso \
+              -b isolinux/isolinux.bin \
+              -c isolinux/boot.cat \
+              -no-emul-boot -boot-load-size 4 -boot-info-table \
+              -J -R -V "RETROGAMER_LIVE" iso_root/
 
           zip RETROGAMER-AMD64-LIVE.iso.zip RETROGAMER-AMD64-LIVE.iso
 
