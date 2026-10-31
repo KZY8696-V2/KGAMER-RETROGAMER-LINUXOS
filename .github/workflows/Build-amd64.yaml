@@ -1,4 +1,4 @@
-name: Build RETROGAMER AMD64 Bootable ISO Image (Strict Check Fix)
+name: Build RETROGAMER AMD64 Bootable ISO Image (Debootstrap Verify Fix)
 
 on:
   push:
@@ -45,9 +45,9 @@ jobs:
           mkdir -p iso_root/live iso_root/isolinux
           mkdir -p mnt
 
-          # Debootstrap ile Debian 12 Bookworm Temel Sistemi Kurma
+          # Debootstrap ile Debian 12 Bookworm Temel Sistemi Kurma ve İndirme Kontrolü
           echo "Bootstrapping Debian $DEBIAN_CODENAME AMD64 for ISO..."
-          debootstrap --arch=amd64 "$DEBIAN_CODENAME" mnt http://deb.debian.org/debian/
+          debootstrap --arch=amd64 "$DEBIAN_CODENAME" mnt http://deb.debian.org/debian/ || { echo "ERROR: Debootstrap failed to download base system!"; exit 1; }
 
           mount -t proc proc mnt/proc
           mount -t sysfs sysfs mnt/sys
@@ -73,7 +73,7 @@ jobs:
               libpng16-16 libpng-tools libjpeg62-turbo libfreetype6 zlib1g \
               libcairo2 libpango-1.0-0 libdrm2 shared-mime-info libfuse2 \
               syslinux syslinux-common syslinux-utils linux-image-amd64 systemd-sysv sudo live-boot live-config ca-certificates
-          "
+          " || { echo "ERROR: Base packages installation failed!"; exit 1; }
 
           # --- 2. RETROPIE İLK KURULUMU ---
           chroot mnt bash -c '
@@ -735,7 +735,7 @@ jobs:
           cp -f mnt/boot/vmlinuz-* iso_root/live/vmlinuz 2>/dev/null || cp -f mnt/vmlinuz iso_root/live/vmlinuz 2>/dev/null || true
           cp -f mnt/boot/initrd.img-* iso_root/live/initrd.img 2>/dev/null || cp -f mnt/initrd.img iso_root/live/initrd.img 2>/dev/null || true
 
-          # --- ISOLINUX.BIN DOSYASINI KOPYALAMA VE KONTROL ---
+          # --- İSOLİNUX.BIN DOSYASINI KOPYALAMA VE DOĞRULAMA ---
           mkdir -p iso_root/isolinux
           cp -f mnt/usr/lib/SYSLINUX/isolinux.bin iso_root/isolinux/ 2>/dev/null || \
           cp -f mnt/usr/share/syslinux/isolinux.bin iso_root/isolinux/ 2>/dev/null || \
@@ -743,24 +743,32 @@ jobs:
           cp -f /usr/lib/SYSLINUX/isolinux.bin iso_root/isolinux/ 2>/dev/null || \
           cp -f /usr/share/syslinux/isolinux.bin iso_root/isolinux/ 2>/dev/null || true
 
+          # Ek modülleri kopyala
           cp -f mnt/usr/share/syslinux/* iso_root/isolinux/ 2>/dev/null || \
           cp -f mnt/usr/lib/syslinux/modules/bios/* iso_root/isolinux/ 2>/dev/null || \
           cp -f /usr/share/syslinux/* iso_root/isolinux/ 2>/dev/null || true
 
-          # Unmount
+          # Eğer isolinux.bin chroot içinde bulunamadıysa doğrudan apt ile çekip çıkartalım
+          if [ ! -f iso_root/isolinux/isolinux.bin ]; then
+              apt-get download syslinux-common syslinux-utils 2>/dev/null || true
+              for deb in *.deb; do dpkg -x "$deb" extracted_deb/ 2>/dev/null || true; done
+              find extracted_deb/ -name "isolinux.bin" -exec cp -f {} iso_root/isolinux/ \; 2>/dev/null || true
+          fi
+
+          # Unmount işlemleri
           umount -lf mnt/dev/pts 2>/dev/null || true
           umount -lf mnt/dev 2>/dev/null || true
           umount -lf mnt/sys 2>/dev/null || true
           umount -lf mnt/proc 2>/dev/null || true
           umount -lf mnt 2>/dev/null || true
 
-          # --- KESİN DOĞRULAMA (EĞİKSİZ HATA KONTROLÜ) ---
+          # --- SON KONTROL VE DOĞRULAMA (İMAJ İNMİŞ Mİ?) ---
           if [ ! -f iso_root/isolinux/isolinux.bin ]; then
-              echo "ERROR: isolinux.bin could not be found!"
+              echo "CRITICAL ERROR: isolinux.bin could not be obtained!"
               exit 1
           fi
           if [ ! -f iso_root/live/vmlinuz ] || [ ! -f iso_root/live/initrd.img ]; then
-              echo "ERROR: Kernel (vmlinuz) or initrd.img could not be found!"
+              echo "CRITICAL ERROR: Kernel (vmlinuz) or initrd.img are missing!"
               exit 1
           fi
 
@@ -777,14 +785,13 @@ jobs:
               APPEND initrd=/live/initrd.img boot=live components union=overlay quiet splash
           EOF
 
-          # --- 4. GENISOIMAGE İLE KESİN ISO OLUŞTURMA ---
+          # --- 4. GENISOIMAGE İLE GERÇEK ISO OLUŞTURMA ---
           genisoimage -o RETROGAMER-AMD64-LIVE.iso \
               -b isolinux/isolinux.bin \
               -c isolinux/boot.cat \
               -no-emul-boot -boot-load-size 4 -boot-info-table \
               -J -R -V "RETROGAMER_LIVE" iso_root/
 
-          # Çıktı dosya boyutunu logda görmek için yazdıralım
           ls -lh RETROGAMER-AMD64-LIVE.iso
 
           zip RETROGAMER-AMD64-LIVE.iso.zip RETROGAMER-AMD64-LIVE.iso
