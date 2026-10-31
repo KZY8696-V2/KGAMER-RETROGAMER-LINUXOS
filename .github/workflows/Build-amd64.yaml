@@ -1,4 +1,4 @@
-name: Build RETROGAMER AMD64 Bootable ISO Image (Final Fix)
+name: Build RETROGAMER AMD64 Bootable ISO Image (Strict Check Fix)
 
 on:
   push:
@@ -40,7 +40,7 @@ jobs:
         run: |
           [[ $EUID -ne 0 ]] && exec sudo /bin/bash "$0" "$@"
           DEBIAN_CODENAME="bookworm"
-          echo "=== RETROGAMER AMD64 LIVE ISO BUILD STARTED (FINAL FIX) ==="
+          echo "=== RETROGAMER AMD64 LIVE ISO BUILD STARTED ==="
 
           mkdir -p iso_root/live iso_root/isolinux
           mkdir -p mnt
@@ -731,11 +731,12 @@ jobs:
           chroot mnt systemctl enable kgamer-setup.service || true
           chroot mnt chown -R kgamer:kgamer /home/kgamer || true
 
-          # Kernel vmlinuz ve initrd kopyalama
+          # --- KERNEL VE INITRD DOSYALARINI GÜVENLİ KOPYALAMA ---
           cp -f mnt/boot/vmlinuz-* iso_root/live/vmlinuz 2>/dev/null || cp -f mnt/vmlinuz iso_root/live/vmlinuz 2>/dev/null || true
           cp -f mnt/boot/initrd.img-* iso_root/live/initrd.img 2>/dev/null || cp -f mnt/initrd.img iso_root/live/initrd.img 2>/dev/null || true
 
-          # --- ISOLINUX DOSYALARINI DOĞRUDAN STANDARD KISMINA KURMA ---
+          # --- ISOLINUX.BIN DOSYASINI KOPYALAMA VE KONTROL ---
+          mkdir -p iso_root/isolinux
           cp -f mnt/usr/lib/SYSLINUX/isolinux.bin iso_root/isolinux/ 2>/dev/null || \
           cp -f mnt/usr/share/syslinux/isolinux.bin iso_root/isolinux/ 2>/dev/null || \
           cp -f mnt/usr/lib/syslinux/modules/bios/isolinux.bin iso_root/isolinux/ 2>/dev/null || \
@@ -753,6 +754,16 @@ jobs:
           umount -lf mnt/proc 2>/dev/null || true
           umount -lf mnt 2>/dev/null || true
 
+          # --- KESİN DOĞRULAMA (EĞİKSİZ HATA KONTROLÜ) ---
+          if [ ! -f iso_root/isolinux/isolinux.bin ]; then
+              echo "ERROR: isolinux.bin could not be found!"
+              exit 1
+          fi
+          if [ ! -f iso_root/live/vmlinuz ] || [ ! -f iso_root/live/initrd.img ]; then
+              echo "ERROR: Kernel (vmlinuz) or initrd.img could not be found!"
+              exit 1
+          fi
+
           # Squashfs Dosya Sistemini Oluşturma
           mksquashfs mnt iso_root/live/filesystem.squashfs -comp xz -b 1M -e proc sys dev run boot || true
 
@@ -766,12 +777,15 @@ jobs:
               APPEND initrd=/live/initrd.img boot=live components union=overlay quiet splash
           EOF
 
-          # --- 4. GENISOIMAGE İLE DOĞRUDAN ISOLINUX/ISOLINUX.BIN YOLU İLE ISO OLUŞTURMA ---
+          # --- 4. GENISOIMAGE İLE KESİN ISO OLUŞTURMA ---
           genisoimage -o RETROGAMER-AMD64-LIVE.iso \
               -b isolinux/isolinux.bin \
               -c isolinux/boot.cat \
               -no-emul-boot -boot-load-size 4 -boot-info-table \
               -J -R -V "RETROGAMER_LIVE" iso_root/
+
+          # Çıktı dosya boyutunu logda görmek için yazdıralım
+          ls -lh RETROGAMER-AMD64-LIVE.iso
 
           zip RETROGAMER-AMD64-LIVE.iso.zip RETROGAMER-AMD64-LIVE.iso
 
