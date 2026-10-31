@@ -1,4 +1,4 @@
-name: Build RETROGAMER AMD64 Bootable ISO Image (Debootstrap Verify Fix)
+name: Build RETROGAMER AMD64 Bootable ISO Image (Direct Install Fix)
 
 on:
   push:
@@ -45,16 +45,16 @@ jobs:
           mkdir -p iso_root/live iso_root/isolinux
           mkdir -p mnt
 
-          # Debootstrap ile Debian 12 Bookworm Temel Sistemi Kurma ve İndirme Kontrolü
+          # Debootstrap ile Debian 12 Bookworm Temel Sistemi Kurma
           echo "Bootstrapping Debian $DEBIAN_CODENAME AMD64 for ISO..."
-          debootstrap --arch=amd64 "$DEBIAN_CODENAME" mnt http://deb.debian.org/debian/ || { echo "ERROR: Debootstrap failed to download base system!"; exit 1; }
+          debootstrap --arch=amd64 "$DEBIAN_CODENAME" mnt http://deb.debian.org/debian/ || { echo "ERROR: Debootstrap failed!"; exit 1; }
 
           mount -t proc proc mnt/proc
           mount -t sysfs sysfs mnt/sys
           mount --bind /dev mnt/dev
           mount --bind /dev/pts mnt/dev/pts
 
-          # --- 1. KULLANICI OLUŞTURMA VE TÜM DİL/KLAVYE PAKETLERİNİN KURULUMU ---
+          # --- 1. KULLANICI OLUŞTURMA VE TÜM PAKETLERİN KURULUMU (SYSLINUX DAHİL) ---
           chroot mnt bash -c "
           export DEBIAN_FRONTEND=noninteractive
           id -u kgamer &>/dev/null || useradd -m -s /bin/bash -G sudo,audio,video,input,games kgamer
@@ -72,8 +72,8 @@ jobs:
               desktop-file-utils libgdk-pixbuf-2.0-0 libgtk-3-0 \
               libpng16-16 libpng-tools libjpeg62-turbo libfreetype6 zlib1g \
               libcairo2 libpango-1.0-0 libdrm2 shared-mime-info libfuse2 \
-              syslinux syslinux-common syslinux-utils linux-image-amd64 systemd-sysv sudo live-boot live-config ca-certificates
-          " || { echo "ERROR: Base packages installation failed!"; exit 1; }
+              syslinux syslinux-common syslinux-utils isolinux linux-image-amd64 systemd-sysv sudo live-boot live-config ca-certificates
+          " || { echo "ERROR: Package installation inside chroot failed!"; exit 1; }
 
           # --- 2. RETROPIE İLK KURULUMU ---
           chroot mnt bash -c '
@@ -735,25 +735,16 @@ jobs:
           cp -f mnt/boot/vmlinuz-* iso_root/live/vmlinuz 2>/dev/null || cp -f mnt/vmlinuz iso_root/live/vmlinuz 2>/dev/null || true
           cp -f mnt/boot/initrd.img-* iso_root/live/initrd.img 2>/dev/null || cp -f mnt/initrd.img iso_root/live/initrd.img 2>/dev/null || true
 
-          # --- İSOLİNUX.BIN DOSYASINI KOPYALAMA VE DOĞRULAMA ---
+          # --- DOĞRUDAN CHROOT İÇİNDEN ISOLINUX.BIN KOPYALAMA ---
           mkdir -p iso_root/isolinux
-          cp -f mnt/usr/lib/SYSLINUX/isolinux.bin iso_root/isolinux/ 2>/dev/null || \
-          cp -f mnt/usr/share/syslinux/isolinux.bin iso_root/isolinux/ 2>/dev/null || \
+          cp -f mnt/usr/lib/ISOLINUX/isolinux.bin iso_root/isolinux/ 2>/dev/null || \
+          cp -f mnt/usr/share/isolinux/isolinux.bin iso_root/isolinux/ 2>/dev/null || \
           cp -f mnt/usr/lib/syslinux/modules/bios/isolinux.bin iso_root/isolinux/ 2>/dev/null || \
-          cp -f /usr/lib/SYSLINUX/isolinux.bin iso_root/isolinux/ 2>/dev/null || \
-          cp -f /usr/share/syslinux/isolinux.bin iso_root/isolinux/ 2>/dev/null || true
+          cp -f mnt/usr/share/syslinux/isolinux.bin iso_root/isolinux/ 2>/dev/null || true
 
-          # Ek modülleri kopyala
-          cp -f mnt/usr/share/syslinux/* iso_root/isolinux/ 2>/dev/null || \
-          cp -f mnt/usr/lib/syslinux/modules/bios/* iso_root/isolinux/ 2>/dev/null || \
-          cp -f /usr/share/syslinux/* iso_root/isolinux/ 2>/dev/null || true
-
-          # Eğer isolinux.bin chroot içinde bulunamadıysa doğrudan apt ile çekip çıkartalım
-          if [ ! -f iso_root/isolinux/isolinux.bin ]; then
-              apt-get download syslinux-common syslinux-utils 2>/dev/null || true
-              for deb in *.deb; do dpkg -x "$deb" extracted_deb/ 2>/dev/null || true; done
-              find extracted_deb/ -name "isolinux.bin" -exec cp -f {} iso_root/isolinux/ \; 2>/dev/null || true
-          fi
+          # Ek modülleri ve c32 dosyalarını kopyala
+          cp -f mnt/usr/lib/syslinux/modules/bios/*.c32 iso_root/isolinux/ 2>/dev/null || \
+          cp -f mnt/usr/share/syslinux/*.c32 iso_root/isolinux/ 2>/dev/null || true
 
           # Unmount işlemleri
           umount -lf mnt/dev/pts 2>/dev/null || true
@@ -762,13 +753,13 @@ jobs:
           umount -lf mnt/proc 2>/dev/null || true
           umount -lf mnt 2>/dev/null || true
 
-          # --- SON KONTROL VE DOĞRULAMA (İMAJ İNMİŞ Mİ?) ---
+          # --- KESİN DOĞRULAMA (DOSYALAR TAM MI?) ---
           if [ ! -f iso_root/isolinux/isolinux.bin ]; then
-              echo "CRITICAL ERROR: isolinux.bin could not be obtained!"
+              echo "CRITICAL ERROR: isolinux.bin could not be found inside the chroot environment!"
               exit 1
           fi
           if [ ! -f iso_root/live/vmlinuz ] || [ ! -f iso_root/live/initrd.img ]; then
-              echo "CRITICAL ERROR: Kernel (vmlinuz) or initrd.img are missing!"
+              echo "CRITICAL ERROR: Kernel or initrd image is missing!"
               exit 1
           fi
 
