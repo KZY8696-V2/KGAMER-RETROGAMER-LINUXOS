@@ -31,17 +31,22 @@ jobs:
           cp -r mnt_iso/* work/iso_root/
           sudo umount mnt_iso
 
+          # Squashfs veya kök dizin kontrolü ve güvenli oluşturma
           SQ_FILE=$(find work/iso_root -name "filesystem.squashfs" -o -name "*.squashfs" | head -n 1)
           if [ -n "$SQ_FILE" ]; then
               sudo unsquashfs -d work/squashfs_root "$SQ_FILE"
           else
-              mkdir -p work/squashfs_root/opt/kgamer
+              # DVD yapısı için güvenli kök dizin iskeleti
+              sudo mkdir -p work/squashfs_root/etc/apt
+              sudo mkdir -p work/squashfs_root/opt/kgamer
           fi
 
+          sudo mkdir -p work/squashfs_root/etc/apt
           sudo mkdir -p work/squashfs_root/opt/kgamer
           sudo mkdir -p work/squashfs_root/home/kgamer/RetroPie/roms/apps
           sudo mkdir -p work/squashfs_root/home/kgamer/RetroPie/roms/games
 
+          # Otomatik archive.debian.org depo yapılandırması (Dizin garantili)
           sudo tee work/squashfs_root/etc/apt/sources.list << 'EOF'
           deb http://archive.debian.org/debian/ jessie main contrib non-free
           deb http://archive.debian.org/debian-security/ jessie/updates main
@@ -142,7 +147,7 @@ jobs:
                           if command -v nmcli &> /dev/null; then
                               active_conn=$(nmcli -t -f NAME,TYPE con show --active | grep wireless | awk -F: '{print $1}')
                               if [ -n "$active_conn" ]; then
-                                  nmcli con modify "$connection_name" connection.autoconnect yes &>/dev/null || true
+                                  nmcli con modify "$active_conn" connection.autoconnect yes &>/dev/null || true
                                   dialog --msgbox "Auto-Connect enabled for active network!" 6 45
                               else
                                   dialog --msgbox "No active Wi-Fi connection found to enable auto-connect." 6 50
@@ -180,7 +185,6 @@ jobs:
                   index=1
                   for js in /dev/input/js*; do
                       if [ -e "$js" ]; then
-                          # Gamepad pil / şarj durumunu okuma denemesi
                           bat_status="Unknown"
                           for bat in /sys/class/power_supply/*controller* /sys/class/power_supply/hid-* /sys/class/power_supply/ps* /sys/class/power_supply/battery*; do
                               if [ -d "$bat" ] && [ -f "$bat/capacity" ]; then
@@ -213,7 +217,7 @@ jobs:
                       if [ $ret_val -ne 0 ] || [ "$SUB_CHOICE" = "BACK" ]; then
                           break
                       elif [ "$SUB_CHOICE" = "CONNECT" ]; then
-                          /opt/kgamer/gamepad-helper.sh
+                        /opt/kgamer/gamepad-helper.sh
                           bluetoothctl connect auto &>/dev/null || true
                           dialog --msgbox "Attempting to auto-connect paired gamepads..." 5 50
                       elif [ "$SUB_CHOICE" = "DISCONNECT" ]; then
@@ -288,7 +292,7 @@ jobs:
 
           if [ -n "$SQ_FILE" ]; then
               sudo rm -f "$SQ_FILE"
-              sudo mksquashfs work/squashfs_root "$SQ_FILE" -noappend
+              sudo mksquashfs work/squashfs_root "$(dirname "$SQ_FILE")/filesystem.squashfs" -noappend
           fi
 
           KERNEL_PATH=$(find work/iso_root -name "vmlinuz*" -o -name "linux*" | head -n 1)
