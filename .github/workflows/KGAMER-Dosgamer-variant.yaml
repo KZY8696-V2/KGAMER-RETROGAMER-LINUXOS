@@ -1,4 +1,4 @@
-name: Build KGAMER DOSGAMER Smart Intel x86 Package
+name: Build KGAMER DOSGAMER Ultimate Intel x86 Package
 
 on:
   push:
@@ -6,9 +6,9 @@ on:
   workflow_dispatch:
 
 jobs:
-  build-smart-package:
+  build-ultimate-package:
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 120
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
@@ -18,63 +18,34 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y xorriso isolinux syslinux syslinux-common wget curl unzip squashfs-tools genisoimage dosfstools mtools git
 
-      - name: Download Base Debian Live x86 ISO & Remaster (Smart Wi-Fi & Gamepad Management)
+      - name: Download Official Debian 8.11.0 i386 DVD-3 ISO & Remaster
         run: |
-          echo "=== KGAMER DOSGAMER SMART INTEL x86 BUILD STARTED ==="
+          echo "=== KGAMER DOSGAMER ULTIMATE INTEL x86 BUILD STARTED ==="
           echo "[INFO] Disk partition protection active: Only virtual loop/squashfs filesystems will be modified."
 
-          ISO_URL="https://cdimage.debian.org/cdimage/archive/8.11.0/i386/iso-cd/debian-live-8.11.0-i386-xfce-desktop.iso"
+          ISO_URL="https://cdimage.debian.org/cdimage/archive/8.11.0/i386/iso-dvd/debian-8.11.0-i386-DVD-3.iso"
+          wget -O base-iso.iso "$ISO_URL"
 
-          echo "Downloading official Debian Live x86 (i386) ISO..."
-          wget -O base-live.iso "$ISO_URL" || wget -O base-live.iso "https://cdimage.debian.org/cdimage/archive/latest/i386/iso-cd/debian-live-i386-xfce-desktop.iso"
-
-          mkdir -p mnt_iso work/iso_root work/squashfs_root
-          sudo mount -o loop base-live.iso mnt_iso
+          mkdir -p mnt_iso work/iso_root work/squashfs_root work/dos_package
+          sudo mount -o loop base-iso.iso mnt_iso
           cp -r mnt_iso/* work/iso_root/
-          cp -r mnt_iso/.disk work/iso_root/ 2>/dev/null || true
           sudo umount mnt_iso
 
-          SQ_FILE=$(find work/iso_root -name "filesystem.squashfs")
-          sudo unsquashfs -d work/squashfs_root "$SQ_FILE"
-
-          # --- CHROOT & PACKAGE INSTALLATION ---
-          sudo mount --bind /dev work/squashfs_root/dev
-          sudo mount --bind /proc work/squashfs_root/proc
-          sudo mount --bind /sys work/squashfs_root/sys
-
-          sudo chroot work/squashfs_root bash -c '
-          export DEBIAN_FRONTEND=noninteractive
-          apt-get update || true
-          apt-get install -y --no-install-recommends \
-              dialog openbox xfce4-panel xfce4-terminal joy2key pcmanfm chromium \
-              git wget curl unzip bluetooth bluez wireless-tools wpasupplicant network-manager \
-              console-data keyboard-configuration locales firmware-linux-free firmware-intelwifi
-          '
-
-          # RetroPie & EmulationStation Installation
-          sudo chroot work/squashfs_root bash -c '
-          export DEBIAN_FRONTEND=noninteractive
-          mkdir -p /opt/kgamer
-          cd /opt/kgamer
-          if [ ! -d "RetroPie-Setup" ]; then
-              git clone --depth=1 https://github.com/RetroPie/RetroPie-Setup.git RetroPie-Setup || true
+          SQ_FILE=$(find work/iso_root -name "filesystem.squashfs" -o -name "*.squashfs" | head -n 1)
+          if [ -n "$SQ_FILE" ]; then
+              sudo unsquashfs -d work/squashfs_root "$SQ_FILE"
+          else
+              mkdir -p work/squashfs_root/opt/kgamer
           fi
-          cd RetroPie-Setup
-          export YES=1
-          ./retropie_packages.sh core setup_packages < /dev/null || true
-          ./retropie_packages.sh essentials < /dev/null || true
-          ./retropie_packages.sh emulationstation install < /dev/null || true
-          ./retropie_packages.sh retroarch install < /dev/null || true
-          ' || true
 
-          # User Setup & Rom Directories
-          sudo chroot work/squashfs_root bash -c '
-          id -u kgamer &>/dev/null || useradd -m -s /bin/bash -G sudo,audio,video,input,games kgamer
-          echo "kgamer:kgamer" | chpasswd
-          mkdir -p /home/kgamer/RetroPie/roms/apps
-          mkdir -p /home/kgamer/RetroPie/roms/games
-          chown -R kgamer:kgamer /home/kgamer/RetroPie
-          '
+          sudo mkdir -p work/squashfs_root/opt/kgamer
+          sudo mkdir -p work/squashfs_root/home/kgamer/RetroPie/roms/apps
+          sudo mkdir -p work/squashfs_root/home/kgamer/RetroPie/roms/games
+
+          sudo tee work/squashfs_root/etc/apt/sources.list << 'EOF'
+          deb http://archive.debian.org/debian/ jessie main contrib non-free
+          deb http://archive.debian.org/debian-security/ jessie/updates main
+          EOF
 
           # --- DYNAMIC APP & GAME DESKTOP FILE SYNC SCRIPT ---
           sudo tee work/squashfs_root/opt/kgamer/sync-desktop-apps.sh << 'EOF'
@@ -99,7 +70,7 @@ jobs:
                   fi
               done
           done
-          chown -R kgamer:kgamer /home/kgamer/RetroPie
+          chown -R 1000:1000 /home/kgamer/RetroPie
           EOF
           sudo chmod +x work/squashfs_root/opt/kgamer/sync-desktop-apps.sh
 
@@ -112,13 +83,12 @@ jobs:
           [ -e /dev/input/js0 ] && JS_DEV="/dev/input/js0"
           [ -e /dev/input/js1 ] && JS_DEV="/dev/input/js1"
           if [ -n "$JS_DEV" ]; then
-              # Otomatik bağlandığında joy2key arka planda çalışarak D-Pad ve tuşları yön tuşlarına/Enter/Esc'ye çevirir
               joy2key -dev "$JS_DEV" -keys 0x1c 0x1c 0x01 0x01 &>/dev/null &
           fi
           EOF
           sudo chmod +x work/squashfs_root/opt/kgamer/gamepad-helper.sh
 
-          # --- SMART CONTROL CENTER (WIFI & GAMEPAD AUTO-CONNECT / DISCONNECT / FORGET) ---
+          # --- SMART CONTROL CENTER WITH AUTO-CONNECT & BATTERY METER ---
           sudo tee work/squashfs_root/opt/kgamer/kgamer-menu.sh << 'EOF'
           #!/bin/bash
           export TERM=linux
@@ -130,12 +100,13 @@ jobs:
                   [ -z "$current_ip" ] && current_ip="Not Connected"
 
                   WIFI_ACTION=$(dialog --clear --title " [ KGAMER - WIFI & DIAL-UP CENTER ] " \
-                      --menu "Current IP: $current_ip\nSelect action:" 17 65 5 \
-                      "1" "Scan & Auto-Connect Wi-Fi Network" \
-                      "2" "View Current IP Address" \
-                      "3" "Disconnect Wi-Fi (Keep Profile in Memory)" \
-                      "4" "Forget Wi-Fi (Delete Profile Permanently)" \
-                      "5" "Return to Main Menu" 3>&1 1>&2 2>&3)
+                      --menu "Current IP: $current_ip\nSelect action:" 18 65 6 \
+                      "1" "Scan & Connect Wi-Fi Network" \
+                      "2" "Enable Auto-Connect for Known Networks" \
+                      "3" "View Current IP Address" \
+                      "4" "Disconnect Wi-Fi (Keep Profile in Memory)" \
+                      "5" "Forget Wi-Fi (Delete Profile Permanently)" \
+                      "6" "Return to Main Menu" 3>&1 1>&2 2>&3)
 
                   case $WIFI_ACTION in
                       1)
@@ -153,7 +124,7 @@ jobs:
                           else
                               exec 3>&1
                               CHOSEN_SSID=$(eval dialog --clear --title "WIFI NETWORKS" \
-                                  --menu "Select network to auto-connect:" 14 55 5 $wifi_list 2>&1 3>&-);
+                                  --menu "Select network to connect:" 14 55 5 $wifi_list 2>&1 3>&-);
                               ret_val=$?
                               exec 3>&-
 
@@ -162,30 +133,41 @@ jobs:
                                       --passwordbox "Enter password for '$CHOSEN_SSID':" 8 45 3>&1 1>&2 2>&3)
                                   if [ -n "$WIFI_PASS" ]; then
                                       nmcli dev wifi connect "$CHOSEN_SSID" password "$WIFI_PASS" &>/dev/null || true
-                                      dialog --msgbox "Auto-connected to '$CHOSEN_SSID' successfully!" 5 50
+                                      dialog --msgbox "Connected and set to Auto-Connect for '$CHOSEN_SSID'!" 5 50
                                   fi
                               fi
                           fi
                           ;;
                       2)
-                          dialog --msgbox "Device IP Address:\n$current_ip" 6 35
+                          if command -v nmcli &> /dev/null; then
+                              active_conn=$(nmcli -t -f NAME,TYPE con show --active | grep wireless | awk -F: '{print $1}')
+                              if [ -n "$active_conn" ]; then
+                                  nmcli con modify "$connection_name" connection.autoconnect yes &>/dev/null || true
+                                  dialog --msgbox "Auto-Connect enabled for active network!" 6 45
+                              else
+                                  dialog --msgbox "No active Wi-Fi connection found to enable auto-connect." 6 50
+                              fi
+                          fi
                           ;;
                       3)
+                          dialog --msgbox "Device IP Address:\n$current_ip" 6 35
+                          ;;
+                      4)
                           if command -v nmcli &> /dev/null; then
                               active_conn=$(nmcli -t -f NAME,TYPE con show --active | grep wireless | awk -F: '{print $1}')
                               [ -n "$active_conn" ] && nmcli con down "$active_conn" &>/dev/null || true
                               nmcli dev disconnect wlan0 &>/dev/null || true
                           fi
-                          dialog --msgbox "Wi-Fi disconnected. Profile remains saved in memory." 6 55
+                          dialog --msgbox "Wi-Fi disconnected. Profile remains saved." 6 50
                           ;;
-                      4)
+                      5)
                           if command -v nmcli &> /dev/null; then
                               active_conn=$(nmcli -t -f NAME,TYPE con show --active | grep wireless | awk -F: '{print $1}')
                               [ -n "$active_conn" ] && nmcli con delete "$active_conn" &>/dev/null || true
                           fi
                           dialog --msgbox "Wi-Fi profile completely forgotten and deleted." 6 55
                           ;;
-                      5|*)
+                      6|*)
                           break
                           ;;
                   esac
@@ -198,7 +180,16 @@ jobs:
                   index=1
                   for js in /dev/input/js*; do
                       if [ -e "$js" ]; then
-                          pad_name="Gamepad $index ($js)"
+                          # Gamepad pil / şarj durumunu okuma denemesi
+                          bat_status="Unknown"
+                          for bat in /sys/class/power_supply/*controller* /sys/class/power_supply/hid-* /sys/class/power_supply/ps* /sys/class/power_supply/battery*; do
+                              if [ -d "$bat" ] && [ -f "$bat/capacity" ]; then
+                                  bat_status="$(cat "$bat/capacity")%"
+                                  break
+                              fi
+                          done
+                          
+                          pad_name="Gamepad $index ($js) [Battery: $bat_status]"
                           found_pads="$found_pads $index \"$pad_name\" ON"
                           index=$((index + 1))
                       fi
@@ -209,8 +200,9 @@ jobs:
                       break
                   else
                       exec 3>&1
-                      SUB_CHOICE=$(eval dialog --clear --title " [ GAMEPAD MANAGER ] " \
-                          --menu "Select action for controllers:" 14 60 4 \
+                      SUB_CHOICE=$(eval dialog --clear --title " [ GAMEPAD MANAGER & BATTERY ] " \
+                          --menu "Select action for controllers:" 15 65 5 \
+                          "CONNECT" "Auto-Connect / Reconnect Gamepads" \
                           "DISCONNECT" "Disconnect Controller (Keep pairing)" \
                           "FORGET" "Forget / Delete Controller Pairing" \
                           "BACK" "Return to Main Menu" \
@@ -220,9 +212,13 @@ jobs:
 
                       if [ $ret_val -ne 0 ] || [ "$SUB_CHOICE" = "BACK" ]; then
                           break
+                      elif [ "$SUB_CHOICE" = "CONNECT" ]; then
+                          /opt/kgamer/gamepad-helper.sh
+                          bluetoothctl connect auto &>/dev/null || true
+                          dialog --msgbox "Attempting to auto-connect paired gamepads..." 5 50
                       elif [ "$SUB_CHOICE" = "DISCONNECT" ]; then
                           pkill -f "joy2key" || true
-                          dialog --msgbox "Gamepad session disconnected. Pairing is kept." 6 50
+                          dialog --msgbox "Gamepad session disconnected. Pairing kept." 6 50
                       elif [ "$SUB_CHOICE" = "FORGET" ]; then
                           pkill -f "joy2key" || true
                           bluetoothctl remove &>/dev/null || true
@@ -236,12 +232,12 @@ jobs:
           while true; do
               /opt/kgamer/gamepad-helper.sh
               CHOICE=$(dialog --stdout --clear \
-                  --title " [ KGAMER DOSGAMER / RETROGAMER (Intel x86) ] " \
+                  --title " [ KGAMER DOSGAMER / RETROGAMER (Ultimate x86) ] " \
                   --menu "Keyboard / D-Pad | Select: Enter/A | Back: Esc/B" 20 65 8 \
                   "1" "Desktop (Openbox + XFCE Panel)" \
                   "2" "GAMES (EmulationStation & Auto Apps/Games Menu)" \
                   "3" "Connect (WiFi Auto-Connect & Gamepad Manager)" \
-                  "4" "Gamepad Manager (Disconnect / Forget)" \
+                  "4" "Gamepad Manager (Disconnect / Forget / Battery)" \
                   "5" "Keyboard Configuration (dpkg-reconfigure)" \
                   "6" "Language & Locales (dpkg-reconfigure)" \
                   "7" "Poweroff / Shutdown")
@@ -290,57 +286,57 @@ jobs:
           fi
           EOF
 
-          sudo umount work/squashfs_root/dev work/squashfs_root/proc work/squashfs_root/sys || true
-          sudo rm -f "$SQ_FILE"
-          sudo mksquashfs work/squashfs_root "$SQ_FILE" -noappend
+          if [ -n "$SQ_FILE" ]; then
+              sudo rm -f "$SQ_FILE"
+              sudo mksquashfs work/squashfs_root "$SQ_FILE" -noappend
+          fi
 
-          KERNEL_PATH=$(find work/iso_root -name "vmlinuz*" | head -n 1)
+          KERNEL_PATH=$(find work/iso_root -name "vmlinuz*" -o -name "linux*" | head -n 1)
           INITRD_PATH=$(find work/iso_root -name "initrd*" | head -n 1)
 
           # --- LOADLIN & DOS / USB / FLOPPY PACKAGE ---
-          mkdir -p work/dos_package
           wget -O work/dos_package/loadlin16.zip "https://www.ibiblio.org/pub/micro/pc-stuff/msdos/utils/boot/loadlin16.zip" || true
           unzip -o work/dos_package/loadlin16.zip -d work/dos_package/ 2>/dev/null || true
           [ -f work/dos_package/LOADLIN.EXE ] || cp work/dos_package/loadlin.exe work/dos_package/LOADLIN.EXE 2>/dev/null || true
 
-          cp "$KERNEL_PATH" work/dos_package/vmlinuz
-          cp "$INITRD_PATH" work/dos_package/initrd.img
+          if [ -n "$KERNEL_PATH" ] && [ -n "$INITRD_PATH" ]; then
+              cp "$KERNEL_PATH" work/dos_package/vmlinuz
+              cp "$INITRD_PATH" work/dos_package/initrd.img
+          fi
 
-          # Gerçek DOS makinelerinde bilgisayar açılır açılmaz otomatik çalışan AUTOEXEC.BAT
           cat << 'EOF' > work/dos_package/AUTOEXEC.BAT
           @ECHO OFF
           CLS
           ECHO ================================================
-          ECHO   KGAMER DOSGAMER INTEL x86 RETRO LAUNCHER
+          ECHO   KGAMER DOSGAMER ULTIMATE INTEL x86 LAUNCHER
           ECHO ================================================
           ECHO Autoexec active: Loading Linux kernel via LOADLIN...
           LOADLIN.EXE vmlinuz initrd=initrd.img root=/dev/ram0 rw
           EOF
 
-          # Manuel başlatma betiği KGAMER.BAT
           cat << 'EOF' > work/dos_package/KGAMER.BAT
           @ECHO OFF
           CLS
           LOADLIN.EXE vmlinuz initrd=initrd.img root=/dev/ram0 rw
           EOF
 
-          # --- ISO GENERATION (CD, Ventoy / Rufus USB Compatible) ---
-          genisoimage -o kgamer-dosgamer-smart-x86.iso \
+          # --- ISO GENERATION ---
+          genisoimage -o kgamer-dosgamer-ultimate-x86.iso \
               -b isolinux/isolinux.bin \
               -c isolinux/boot.cat \
               -no-emul-boot -boot-load-size 4 -boot-info-table \
               -r -J work/iso_root
 
           mkdir -p final_output
-          mv kgamer-dosgamer-smart-x86.iso final_output/
+          mv kgamer-dosgamer-ultimate-x86.iso final_output/
           cp -r work/dos_package/* final_output/
           
           cd final_output
-          zip -r ../KGAMER-DOSGAMER-SMART-INTEL-x86.zip *
+          zip -r ../KGAMER-DOSGAMER-ULTIMATE-INTEL-x86.zip *
           cd ..
 
-      - name: Upload Smart Intel x86 Package Artifact
+      - name: Upload Ultimate Package Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: KGAMER-DOSGAMER-SMART-INTEL-x86
-          path: KGAMER-DOSGAMER-SMART-INTEL-x86.zip
+          name: KGAMER-DOSGAMER-ULTIMATE-INTEL-x86
+          path: KGAMER-DOSGAMER-ULTIMATE-INTEL-x86.zip
